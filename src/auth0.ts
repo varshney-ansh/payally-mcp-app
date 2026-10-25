@@ -20,19 +20,23 @@ export function auth0Mcp(options: Auth0McpOptions) {
   //@ts-expect-error TypeScript doesnt like this
   const router = new express.Router();
 
-  router.use(async (req: Request, res: Response, next: NextFunction) => {
-    req.auth0Mcp = createAuth0Mcp({
-      resourceName: options.resourceName,
-      resourceServerUrl: options.resourceServerUrl,
-      domain: options.domain,
-      audience: options.audience,
-    });
+  // Build the auth0Mcp instance once at startup, not per-request.
+  const auth0McpInstance = createAuth0Mcp({
+    resourceName: options.resourceName,
+    resourceServerUrl: options.resourceServerUrl,
+    domain: options.domain,
+    audience: options.audience,
+  });
+
+  // Attach the instance to every request for use in downstream middleware.
+  router.use((req: Request, _res: Response, next: NextFunction) => {
+    req.auth0Mcp = auth0McpInstance;
     next();
   });
 
-  // Add metadata routes
+  // Add metadata routes.
   router.use(async (req: Request, res: Response, next: NextFunction) => {
-    const metadataRouter = await req.auth0Mcp.authMetadataRouter();
+    const metadataRouter = await auth0McpInstance.authMetadataRouter();
     return metadataRouter(req, res, next);
   });
 
@@ -42,7 +46,8 @@ export function auth0Mcp(options: Auth0McpOptions) {
 export function createAuth0Mcp(opts: Auth0McpOptions) {
   const verify = createVerifier(opts);
 
-  const authMetadataRouter = createAuthMetadataRouter(opts);
+  // Eagerly start building the router; the middleware awaits it on first use.
+  const authMetadataRouterPromise = createAuthMetadataRouter(opts);
   const authMiddleware = createAuthMiddleware(opts, verify);
 
   return {
@@ -54,7 +59,7 @@ export function createAuth0Mcp(opts: Auth0McpOptions) {
     /**
      * Creates an Express router that exposes OAuth metadata endpoints needed for MCP clients.
      */
-    authMetadataRouter: () => authMetadataRouter,
+    authMetadataRouter: () => authMetadataRouterPromise,
 
     /**
      * Creates Express middleware for protecting MCP endpoints.
@@ -123,6 +128,9 @@ function createVerifier(opts: Auth0McpOptions) {
           ...(isNonEmptyString(decoded.azp) && { azp: decoded.azp }),
           ...(isNonEmptyString(decoded.name) && { name: decoded.name }),
           ...(isNonEmptyString(decoded.email) && { email: decoded.email }),
+          ...(isNonEmptyString(decoded['paypal_merchant_id']) && {
+            paypal_merchant_id: decoded['paypal_merchant_id'],
+          }),
         },
       };
     } catch (error) {

@@ -2,7 +2,6 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import type { NextFunction, Request, Response } from 'express';
-import * as z from 'zod/v4';
 import { McpServer } from '@modelcontextprotocol/server';
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import { auth0Mcp } from './auth0.js';
@@ -16,6 +15,7 @@ const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN as string;
 const AUDIENCE = (process.env.AUTH0_AUDIENCE ?? MCP_SERVER_URL) as string;
 const MGMT_CLIENT_ID = process.env.AUTH0_MGMT_CLIENT_ID as string;
 const MGMT_CLIENT_SECRET = process.env.AUTH0_MGMT_CLIENT_SECRET as string;
+const PAYPAL_MERCHANT_ID = process.env.PAYPAL_MERCHANT_ID as string;
 
 // Validate required environment variables
 if (!AUTH0_DOMAIN) {
@@ -58,12 +58,13 @@ app.post('/mcp', requireAuth, async (req: Request, res: Response) => {
             async (ctx) => {
                 const authInfo = ctx.http?.authInfo as Auth | undefined;
                 const profile = authInfo ? await getUserProfile(authInfo.extra.sub, AUTH0_DOMAIN, MGMT_CLIENT_ID, MGMT_CLIENT_SECRET) : null;
+                const merchantId = authInfo?.extra.paypal_merchant_id ?? PAYPAL_MERCHANT_ID;
 
                 return {
                     content: [
                         {
                             type: 'text' as const,
-                            text: JSON.stringify({authInfo, profile}),
+                            text: JSON.stringify({ authInfo, profile, merchantId }),
                         },
                     ],
                 };

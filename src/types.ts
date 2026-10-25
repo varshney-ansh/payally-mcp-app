@@ -1,5 +1,4 @@
 import { AuthInfo } from "@modelcontextprotocol/server";
-import type { NextFunction, Request, Response } from "express";
 
 export interface Auth0McpOptions {
   /**
@@ -23,6 +22,7 @@ export interface Auth0McpOptions {
 
   /** Human-readable name for this MCP server, exposed in resource metadata. */
   resourceName: string;
+
 }
 
 /**
@@ -52,5 +52,8 @@ export interface Auth extends AuthInfo {
 
     /** User's profile picture URL, if available. */
     picture?: string;
+
+    /** PayPal Merchant ID extracted from the decoded Auth0 access token. */
+    paypal_merchant_id?: string;
   };
 }
