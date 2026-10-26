@@ -4,6 +4,8 @@ import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from '@model
 import { exploreProducts } from '../payally-api.js';
 import { ProductSchema } from '../payally-types/schema.js';
 import { readWidgetHtml } from './widget-html.js';
+import { toDataUri } from '../image-base64.js';
+import type { Product } from '../payally-types/product.js';
 
 const WIDGET_URI = 'ui://widget/explore-product.html';
 
@@ -30,13 +32,17 @@ export function registerExploreProduct(server: McpServer, merchantIdFallback: st
             ui: {
               prefersBorder: true,
               csp: {
-                // The widget fetches each product image client-side and encodes
-                // it to a base64 data URI (connect-src). Images come from
-                // arbitrary CDNs, so allow any https host. If a host rejects the
-                // 'https://*' wildcard form, change it to '*'.
-                connectDomains: ['https://api.payally.world', 'https://*'],
-                // Direct-URL <img> fallback (img-src) when base64 encoding fails.
-                resourceDomains: ['https://*'],
+                // Images now arrive PRE-ENCODED as base64 data URIs from the
+                // server (see the tool handler below), so the widget never
+                // fetches images itself — only the API host remains for any
+                // widget-initiated calls (connect-src → connectDomains).
+                connectDomains: ['https://api.payally.world'],
+                // resourceDomains maps to img-src (per McpUiResourceCsp). There
+                // is no dedicated `data:` field in McpUiResourceCsp, so add the
+                // literal 'data:' here to let <img> render inline base64 URIs,
+                // and keep 'https://*' for the original-url fallback when a
+                // server-side encode fails.
+                resourceDomains: ['https://*', 'data:'],
               },
             },
           },
@@ -76,13 +82,48 @@ export function registerExploreProduct(server: McpServer, merchantIdFallback: st
         maxPrice: max_price,
       });
 
-      const summary = products.length
-        ? `Found ${products.length} product(s) for "${query}".`
-        : `No products found for "${query}".`;
+      // MODEL-facing view (goes into the `content` text channel, which Claude
+      // surfaces to the model). Compact: id/title/price/seller/category with
+      // ORIGINAL http(s) image urls — NEVER base64 blobs (keeps the payload
+      // small and readable). This is what BUG 1 was missing: the full product
+      // data was only in structuredContent, which the model never sees.
+      const modelView = products.map((p) => ({
+        id: p.id,
+        title: p.title,
+        price: p.price,
+        seller: p.seller,
+        category: p.category,
+        image: p.image?.url ?? p.images?.[0]?.url,
+      }));
+
+      // WIDGET-facing view (structuredContent). Encode ONLY the primary image
+      // per card to base64 — encoding every image across a whole carousel would
+      // bloat the notification payload and slow the tool. The single-product
+      // gallery (getproductbyid) encodes all images instead. Per-product
+      // try/catch falls back to the ORIGINAL url so one broken image can't break
+      // the response; encodes run in parallel via Promise.all.
+      const widgetProducts: Product[] = await Promise.all(
+        products.map(async (p) => {
+          const primaryUrl = p.image?.url ?? p.images?.[0]?.url;
+          if (!primaryUrl) return p;
+          let encoded = primaryUrl;
+          try {
+            encoded = await toDataUri(primaryUrl);
+          } catch {
+            // fall back to the original url string
+          }
+          // Rewrite the primary image url to the encoded (or fallback) value.
+          if (p.image?.url) {
+            return { ...p, image: { ...p.image, url: encoded } };
+          }
+          const [first, ...rest] = p.images ?? [];
+          return { ...p, images: first ? [{ ...first, url: encoded }, ...rest] : p.images };
+        }),
+      );
 
       return {
-        structuredContent: { query, products, ...(nextPageToken ? { nextPageToken } : {}) },
-        content: [{ type: 'text' as const, text: summary }],
+        structuredContent: { query, products: widgetProducts, ...(nextPageToken ? { nextPageToken } : {}) },
+        content: [{ type: 'text' as const, text: JSON.stringify(modelView) }],
       };
     },
   );

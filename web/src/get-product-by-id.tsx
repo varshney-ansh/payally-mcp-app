@@ -9,7 +9,6 @@ import { EmptyMessage } from "@openai/apps-sdk-ui/components/EmptyMessage";
 import { ShoppingBag, Star, StarFilled } from "@openai/apps-sdk-ui/components/Icon";
 
 import { useToolResult } from "./useToolResult";
-import { useBase64Image } from "./useBase64Image";
 import type { Money, Product, ProductImage } from "./types";
 
 /**
@@ -41,32 +40,6 @@ function formatPrice(price?: Money): string | null {
   } catch {
     return `${price.amount} ${price.currency ?? ""}`.trim();
   }
-}
-
-/**
- * Presentational image that encodes its URL to a base64 data URI at render time
- * (via `useBase64Image`) and shows a pulse skeleton while encoding. On
- * encode/fetch failure it falls back to loading the original URL directly.
- * Kept as a component so the hook can be used per-image inside a `.map`.
- */
-function Base64Img({
-  url,
-  altText,
-  className,
-  draggable,
-}: {
-  url: string;
-  altText?: string;
-  className?: string;
-  draggable?: boolean;
-}) {
-  const { src, status } = useBase64Image(url);
-  if (status === "loading") {
-    return <div className={`${className ?? ""} animate-pulse bg-bone`} />;
-  }
-  return (
-    <Image src={src} alt={altText} draggable={draggable} className={className} />
-  );
 }
 
 function Rating({ rating }: { rating: Product["rating"] }) {
@@ -105,9 +78,11 @@ function Gallery({ images, title }: { images: ProductImage[]; title: string }) {
   return (
     <div className="flex w-full shrink-0 flex-col gap-2 sm:w-56">
       <div className="aspect-square w-full overflow-hidden rounded-card bg-bone">
-        <Base64Img
-          url={main.url}
-          altText={main.altText ?? title}
+        {/* Server pre-encodes every gallery image to a base64 data URI (BUG 2),
+            so render the url directly — no client-side fetch/encode. */}
+        <Image
+          src={main.url}
+          alt={main.altText ?? title}
           className="h-full w-full object-cover"
         />
       </div>
@@ -127,9 +102,9 @@ function Gallery({ images, title }: { images: ProductImage[]; title: string }) {
                   : "border-ash opacity-80 hover:opacity-100"
               }`}
             >
-              <Base64Img
-                url={img.url}
-                altText={img.altText ?? `${title} thumbnail ${i + 1}`}
+              <Image
+                src={img.url}
+                alt={img.altText ?? `${title} thumbnail ${i + 1}`}
                 draggable={false}
                 className="h-full w-full object-cover"
               />

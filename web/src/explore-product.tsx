@@ -15,7 +15,6 @@ import {
 } from "@openai/apps-sdk-ui/components/Icon";
 
 import { useToolResult } from "./useToolResult";
-import { useBase64Image } from "./useBase64Image";
 import type { App } from "@modelcontextprotocol/ext-apps/react";
 import type { Money, Product } from "./types";
 
@@ -38,24 +37,34 @@ function formatPrice(price?: Money): string | null {
 }
 
 /**
- * Opens a product via the standard ext-apps bridge: prefer a direct
- * `getproductbyid` server-tool call when the host can proxy tool calls,
- * otherwise fall back to a plain follow-up message. No ChatGPT-only APIs.
+ * Opens a product via the standard ext-apps bridge.
+ *
+ * BUG 3 root cause: the old version gated the `callServerTool` attempt behind
+ * `if (app.getHostCapabilities()?.serverTools)`. Claude Desktop proxies tool
+ * calls for the widget WITHOUT advertising a `serverTools` host capability, so
+ * that gate was always false — the tool call never ran, and because the
+ * `sendMessage` fallback was INSIDE the gate it never ran either. The click was
+ * a silent no-op.
+ *
+ * Fix: never hard-gate on `getHostCapabilities()?.serverTools`. ALWAYS attempt
+ * `callServerTool` (the host proxies it; it resolves after the handshake), and
+ * on a thrown error OR a result with `isError`, fall back to `sendMessage`.
+ * Both signatures match `app.d.ts`:
+ *   callServerTool(params: CallToolRequest["params"], options?)
+ *   sendMessage(params: McpUiMessageRequest["params"], options?)
  */
 async function openProduct(app: App | null, productId: string): Promise<void> {
   if (!app) return;
 
-  if (app.getHostCapabilities()?.serverTools) {
-    try {
-      const result = await app.callServerTool({
-        name: "getproductbyid",
-        arguments: { productId },
-      });
-      if (!result.isError) return;
-      // Tool reported an error — fall through to the message fallback.
-    } catch {
-      // Transport/host failure — fall through to the message fallback.
-    }
+  try {
+    const result = await app.callServerTool({
+      name: "getproductbyid",
+      arguments: { productId },
+    });
+    if (!result.isError) return;
+    // Tool reported an error — fall through to the message fallback.
+  } catch {
+    // Transport/host failure — fall through to the message fallback.
   }
 
   try {
@@ -89,10 +98,14 @@ function Rating({ rating }: { rating: Product["rating"] }) {
   );
 }
 
-/** Image slot with a loading skeleton while the base64 encode is in flight. */
+/**
+ * Image slot. The server pre-encodes the primary image to a base64 data URI
+ * (BUG 2), so we render `url` directly — no client-side fetch/encode. When the
+ * server fell back to the original url (encode failed) the <img> onError just
+ * hides the broken image and we keep the bone background.
+ */
 function CardImage({ product }: { product: Product }) {
   const imageUrl = product.image?.url ?? product.images?.[0]?.url;
-  const { src, status } = useBase64Image(imageUrl);
 
   return (
     <div className="aspect-square w-full overflow-hidden rounded-card bg-bone">
@@ -100,11 +113,9 @@ function CardImage({ product }: { product: Product }) {
         <div className="flex h-full w-full items-center justify-center text-graphite">
           <ShoppingBag width={32} height={32} />
         </div>
-      ) : status === "loading" ? (
-        <div className="h-full w-full animate-pulse rounded-card bg-bone" />
       ) : (
         <Image
-          src={src}
+          src={imageUrl}
           alt={product.image?.altText ?? product.title}
           draggable={false}
           className="h-full w-full rounded-card object-cover"
