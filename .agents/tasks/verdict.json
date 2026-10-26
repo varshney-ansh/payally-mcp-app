@@ -1,0 +1,5 @@
+{
+  "verdict": "APPROVED",
+  "summary": "Both read-only product widgets ship via standard MCP Apps ext-apps helpers with env-only merchant id; build:ui and npm start both verified passing.",
+  "findings": []
+}
