@@ -36,10 +36,17 @@ Explicitly NOT changed (the user did NOT ask to remove AuthInfo):
   `_meta.ui.csp = { connectDomains: [...], resourceDomains: [...] }` on the object returned by the
   `registerAppResource` read callback's content item (`contents[0]._meta.ui.csp`). Confirmed in
   `spec.types.d.ts` (`McpUiResourceCsp`, `McpUiResourceMeta`, `McpUiToolMeta`).
-- Product image CDN is `https://cdn.trychannel3.com` (from the sample `image.url`). So
-  `resourceDomains: ['https://cdn.trychannel3.com']` and `connectDomains: ['https://api.payally.world']`.
-  Embla is bundled locally, so NO `cdn.jsdelivr.net` entry (the existing draft's jsdelivr CSP + CDN
-  import must be dropped).
+- CSP (as implemented): `connectDomains: ['https://api.payally.world']` and
+  `resourceDomains: ['https://*']`. EXPLICIT USER REQUIREMENT (not a mistake / not a review miss):
+  product image URLs may be on ANY domain, so `resourceDomains` is intentionally a wildcard over any
+  https host (maps to CSP `img-src`/`script-src`/`style-src`/`font-src`/`media-src`). `connectDomains`
+  stays narrow because the only network fetch is the PayAlly API — and that happens server-side; the
+  widget only renders data it is handed. The installed spec type `McpUiResourceCsp` (in
+  `node_modules/@modelcontextprotocol/ext-apps/dist/src/spec.types.d.ts`) types `resourceDomains` as a
+  plain `string[]` (no format restriction; wildcard host forms documented as supported), so
+  `'https://*'` is accepted as-is — no fallback to `'*'` was needed. (Earlier draft scoped this to
+  `https://cdn.trychannel3.com`; that is now superseded.) Embla is bundled locally, so NO
+  `cdn.jsdelivr.net` entry (the existing draft's jsdelivr CSP + CDN import was dropped).
 - View side (React): `useApp` + `useHostStyles` from `@modelcontextprotocol/ext-apps/react`; subscribe
   to results via `app.addEventListener('toolresult', handler)` (preferred over the deprecated
   `app.ontoolresult` setter) registered in `useApp`'s `onAppCreated` so no notification is missed.

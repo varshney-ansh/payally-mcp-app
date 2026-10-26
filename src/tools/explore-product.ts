@@ -31,7 +31,8 @@ export function registerExploreProduct(server: McpServer, merchantIdFallback: st
               prefersBorder: true,
               csp: {
                 connectDomains: ['https://api.payally.world'],
-                resourceDomains: ['https://cdn.trychannel3.com'],
+                // Product images come from arbitrary CDNs, so allow any https host.
+                resourceDomains: ['https://*'],
               },
             },
           },
