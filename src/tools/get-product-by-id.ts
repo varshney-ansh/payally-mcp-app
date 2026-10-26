@@ -4,8 +4,6 @@ import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from '@model
 import { getProductById } from '../payally-api.js';
 import { ProductSchema } from '../payally-types/schema.js';
 import { readWidgetHtml } from './widget-html.js';
-import { toDataUri } from '../image-base64.js';
-import type { Product, ProductImage } from '../payally-types/product.js';
 
 const WIDGET_URI = 'ui://widget/get-product-by-id.html';
 
@@ -32,16 +30,16 @@ export function registerGetProductById(server: McpServer, merchantIdFallback: st
             ui: {
               prefersBorder: true,
               csp: {
-                // Images now arrive PRE-ENCODED as base64 data URIs from the
-                // server (see the tool handler below), so the widget never
-                // fetches images itself — only the API host remains for any
+                // structuredContent carries the ORIGINAL product image urls
+                // unchanged; the widget renders them directly (no base64, no
+                // widget-side image fetch). Only the API host remains for any
                 // widget-initiated calls (connect-src → connectDomains).
                 connectDomains: ['https://api.payally.world'],
-                // resourceDomains maps to img-src (per McpUiResourceCsp). There
-                // is no dedicated `data:` field in McpUiResourceCsp, so add the
-                // literal 'data:' here to let <img> render inline base64 URIs,
-                // and keep 'https://*' for the original-url fallback when a
-                // server-side encode fails.
+                // resourceDomains maps to img-src (per McpUiResourceCsp).
+                // Product images come from arbitrary brand domains, so we
+                // allowlist 'https://*' for them, plus 'data:' for the inline
+                // SVG placeholder the widget swaps in when an image is blocked
+                // or fails to load.
                 resourceDomains: ['https://*', 'data:'],
               },
             },
@@ -86,43 +84,12 @@ export function registerGetProductById(server: McpServer, merchantIdFallback: st
       // so the model could not read the product's details.
       const modelProduct = product;
 
-      // WIDGET-facing view (structuredContent). This is a SINGLE-product gallery
-      // with a bounded number of images, so (unlike the carousel) we encode ALL
-      // images — main image, every images[] entry, and every variant image — to
-      // base64 data URIs. Each encode has its own try/catch that falls back to
-      // the ORIGINAL url so one broken image never breaks the card; all encodes
-      // run in parallel.
-      const encode = async (url: string): Promise<string> => {
-        try {
-          return await toDataUri(url);
-        } catch {
-          return url; // fall back to the original url string
-        }
-      };
-      const encodeImage = async (img: ProductImage): Promise<ProductImage> => ({
-        ...img,
-        url: await encode(img.url),
-      });
-
-      const [mainImage, images, variants] = await Promise.all([
-        product.image ? encodeImage(product.image) : Promise.resolve(undefined),
-        Promise.all((product.images ?? []).map(encodeImage)),
-        Promise.all(
-          (product.variants ?? []).map(async (v) =>
-            v.image ? { ...v, image: await encodeImage(v.image) } : v,
-          ),
-        ),
-      ]);
-
-      const widgetProduct: Product = {
-        ...product,
-        ...(mainImage ? { image: mainImage } : {}),
-        images,
-        variants,
-      };
-
+      // WIDGET-facing view (structuredContent). Carries the product with its
+      // ORIGINAL image urls, unchanged — no base64, no server-side image fetch.
+      // The widget renders the urls directly (allowlisted via the resource CSP)
+      // and swaps an inline SVG placeholder on load failure.
       return {
-        structuredContent: widgetProduct,
+        structuredContent: product,
         content: [{ type: 'text' as const, text: JSON.stringify(modelProduct) }],
       };
     },

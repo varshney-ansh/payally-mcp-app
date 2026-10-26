@@ -4,8 +4,6 @@ import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from '@model
 import { exploreProducts } from '../payally-api.js';
 import { ProductSchema } from '../payally-types/schema.js';
 import { readWidgetHtml } from './widget-html.js';
-import { toDataUri } from '../image-base64.js';
-import type { Product } from '../payally-types/product.js';
 
 const WIDGET_URI = 'ui://widget/explore-product.html';
 
@@ -32,16 +30,16 @@ export function registerExploreProduct(server: McpServer, merchantIdFallback: st
             ui: {
               prefersBorder: true,
               csp: {
-                // Images now arrive PRE-ENCODED as base64 data URIs from the
-                // server (see the tool handler below), so the widget never
-                // fetches images itself — only the API host remains for any
+                // structuredContent carries the ORIGINAL product image urls
+                // unchanged; the widget renders them directly (no base64, no
+                // widget-side image fetch). Only the API host remains for any
                 // widget-initiated calls (connect-src → connectDomains).
                 connectDomains: ['https://api.payally.world'],
-                // resourceDomains maps to img-src (per McpUiResourceCsp). There
-                // is no dedicated `data:` field in McpUiResourceCsp, so add the
-                // literal 'data:' here to let <img> render inline base64 URIs,
-                // and keep 'https://*' for the original-url fallback when a
-                // server-side encode fails.
+                // resourceDomains maps to img-src (per McpUiResourceCsp).
+                // Product images come from arbitrary brand domains, so we
+                // allowlist 'https://*' for them, plus 'data:' for the inline
+                // SVG placeholder the widget swaps in when an image is blocked
+                // or fails to load.
                 resourceDomains: ['https://*', 'data:'],
               },
             },
@@ -96,33 +94,12 @@ export function registerExploreProduct(server: McpServer, merchantIdFallback: st
         image: p.image?.url ?? p.images?.[0]?.url,
       }));
 
-      // WIDGET-facing view (structuredContent). Encode ONLY the primary image
-      // per card to base64 — encoding every image across a whole carousel would
-      // bloat the notification payload and slow the tool. The single-product
-      // gallery (getproductbyid) encodes all images instead. Per-product
-      // try/catch falls back to the ORIGINAL url so one broken image can't break
-      // the response; encodes run in parallel via Promise.all.
-      const widgetProducts: Product[] = await Promise.all(
-        products.map(async (p) => {
-          const primaryUrl = p.image?.url ?? p.images?.[0]?.url;
-          if (!primaryUrl) return p;
-          let encoded = primaryUrl;
-          try {
-            encoded = await toDataUri(primaryUrl);
-          } catch {
-            // fall back to the original url string
-          }
-          // Rewrite the primary image url to the encoded (or fallback) value.
-          if (p.image?.url) {
-            return { ...p, image: { ...p.image, url: encoded } };
-          }
-          const [first, ...rest] = p.images ?? [];
-          return { ...p, images: first ? [{ ...first, url: encoded }, ...rest] : p.images };
-        }),
-      );
-
+      // WIDGET-facing view (structuredContent). Carries the products with
+      // their ORIGINAL image urls, unchanged — no base64, no server-side image
+      // fetch. The widget renders the urls directly (allowlisted via the
+      // resource CSP) and swaps an inline SVG placeholder on load failure.
       return {
-        structuredContent: { query, products: widgetProducts, ...(nextPageToken ? { nextPageToken } : {}) },
+        structuredContent: { query, products, ...(nextPageToken ? { nextPageToken } : {}) },
         content: [{ type: 'text' as const, text: JSON.stringify(modelView) }],
       };
     },

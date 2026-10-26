@@ -3,13 +3,32 @@ import "./styles.css";
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
-import { Image } from "@openai/apps-sdk-ui/components/Image";
 import { Badge } from "@openai/apps-sdk-ui/components/Badge";
 import { EmptyMessage } from "@openai/apps-sdk-ui/components/EmptyMessage";
 import { ShoppingBag, Star, StarFilled } from "@openai/apps-sdk-ui/components/Icon";
 
 import { useToolResult } from "./useToolResult";
 import type { Money, Product, ProductImage } from "./types";
+
+/**
+ * Neutral inline-SVG placeholder (mishmash achromatic: bone #f2f2f2 background,
+ * graphite #a1a1a1 ShoppingBag glyph). Swapped in via <img onError> when the
+ * original image url is blocked by the host CSP or fails to load, so a broken
+ * image never shows the browser's broken-image glyph. data: is allowlisted in
+ * the resource CSP resourceDomains for exactly this fallback.
+ */
+const IMAGE_PLACEHOLDER =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#a1a1a1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="background:#f2f2f2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>',
+  );
+
+/** Swap in the placeholder once on load failure (guard against a swap loop). */
+function onImageError(e: React.SyntheticEvent<HTMLImageElement>) {
+  if (e.currentTarget.src !== IMAGE_PLACEHOLDER) {
+    e.currentTarget.src = IMAGE_PLACEHOLDER;
+  }
+}
 
 /**
  * Collects every image for a product: the main `image` first, then the
@@ -78,11 +97,13 @@ function Gallery({ images, title }: { images: ProductImage[]; title: string }) {
   return (
     <div className="flex w-full shrink-0 flex-col gap-2 sm:w-56">
       <div className="aspect-square w-full overflow-hidden rounded-card bg-bone">
-        {/* Server pre-encodes every gallery image to a base64 data URI (BUG 2),
-            so render the url directly — no client-side fetch/encode. */}
-        <Image
+        {/* Render the ORIGINAL image url directly (allowlisted via the resource
+            CSP) — no client-side fetch/encode. onError swaps in the inline-SVG
+            placeholder if the host blocks the image or it fails to load. */}
+        <img
           src={main.url}
           alt={main.altText ?? title}
+          onError={onImageError}
           className="h-full w-full object-cover"
         />
       </div>
@@ -102,10 +123,11 @@ function Gallery({ images, title }: { images: ProductImage[]; title: string }) {
                   : "border-ash opacity-80 hover:opacity-100"
               }`}
             >
-              <Image
+              <img
                 src={img.url}
                 alt={img.altText ?? `${title} thumbnail ${i + 1}`}
                 draggable={false}
+                onError={onImageError}
                 className="h-full w-full object-cover"
               />
             </button>

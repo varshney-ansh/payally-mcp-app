@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import useEmblaCarousel from "embla-carousel-react";
 
-import { Image } from "@openai/apps-sdk-ui/components/Image";
 import { EmptyMessage } from "@openai/apps-sdk-ui/components/EmptyMessage";
 import {
   ChevronLeft,
@@ -23,6 +22,19 @@ interface ExploreOutput {
   products: Product[];
   nextPageToken?: string;
 }
+
+/**
+ * Neutral inline-SVG placeholder (mishmash achromatic: bone #f2f2f2 background,
+ * graphite #a1a1a1 ShoppingBag glyph). Swapped in via <img onError> when the
+ * original image url is blocked by the host CSP or fails to load, so a broken
+ * image never shows the browser's broken-image glyph. data: is allowlisted in
+ * the resource CSP resourceDomains for exactly this fallback.
+ */
+const IMAGE_PLACEHOLDER =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#a1a1a1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="background:#f2f2f2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>',
+  );
 
 function formatPrice(price?: Money): string | null {
   if (!price || typeof price.amount !== "number") return null;
@@ -99,10 +111,10 @@ function Rating({ rating }: { rating: Product["rating"] }) {
 }
 
 /**
- * Image slot. The server pre-encodes the primary image to a base64 data URI
- * (BUG 2), so we render `url` directly — no client-side fetch/encode. When the
- * server fell back to the original url (encode failed) the <img> onError just
- * hides the broken image and we keep the bone background.
+ * Image slot. Renders the product's ORIGINAL image url directly (allowlisted
+ * via the resource CSP) — no client-side fetch/encode. If the host blocks the
+ * image or it fails to load, onError swaps in the inline-SVG placeholder so a
+ * broken-image glyph never appears (the guard prevents a swap loop).
  */
 function CardImage({ product }: { product: Product }) {
   const imageUrl = product.image?.url ?? product.images?.[0]?.url;
@@ -114,10 +126,15 @@ function CardImage({ product }: { product: Product }) {
           <ShoppingBag width={32} height={32} />
         </div>
       ) : (
-        <Image
+        <img
           src={imageUrl}
           alt={product.image?.altText ?? product.title}
           draggable={false}
+          onError={(e) => {
+            if (e.currentTarget.src !== IMAGE_PLACEHOLDER) {
+              e.currentTarget.src = IMAGE_PLACEHOLDER;
+            }
+          }}
           className="h-full w-full rounded-card object-cover"
         />
       )}
