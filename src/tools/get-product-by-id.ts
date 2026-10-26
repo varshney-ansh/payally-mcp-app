@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server';
 import { getProductById } from '../payally-api.js';
 import { ProductSchema } from '../payally-types/schema.js';
+import { toUploadcareImage, uploadcareCdnOrigin } from '../uploadcare.js';
 import { readWidgetHtml } from './widget-html.js';
 
 const WIDGET_URI = 'ui://widget/get-product-by-id.html';
@@ -30,17 +31,20 @@ export function registerGetProductById(server: McpServer, merchantIdFallback: st
             ui: {
               prefersBorder: true,
               csp: {
-                // structuredContent carries the ORIGINAL product image urls
-                // unchanged; the widget renders them directly (no base64, no
-                // widget-side image fetch). Only the API host remains for any
-                // widget-initiated calls (connect-src → connectDomains).
+                // structuredContent delivers every product image from
+                // Uploadcare's single CDN origin: each brand-domain image is
+                // ingested server-side (upload-from-URL → UUID) and served from
+                // the one allowlistable CDN host — no base64, no widget-side
+                // image fetch. connect-src keeps the API host for any
+                // widget-initiated calls.
                 connectDomains: ['https://api.payally.world'],
                 // resourceDomains maps to img-src (per McpUiResourceCsp).
-                // Product images come from arbitrary brand domains, so we
-                // allowlist 'https://*' for them, plus 'data:' for the inline
-                // SVG placeholder the widget swaps in when an image is blocked
-                // or fails to load.
-                resourceDomains: ['https://*', 'data:'],
+                // Product images come from arbitrary brand domains, so a host
+                // allowlist of those domains is impossible; instead every image
+                // is delivered from Uploadcare's single CDN origin. We allowlist
+                // that one concrete origin plus 'data:' for the inline-SVG
+                // placeholder the widget swaps in on load failure.
+                resourceDomains: [uploadcareCdnOrigin, 'data:'],
               },
             },
           },
@@ -84,12 +88,36 @@ export function registerGetProductById(server: McpServer, merchantIdFallback: st
       // so the model could not read the product's details.
       const modelProduct = product;
 
-      // WIDGET-facing view (structuredContent). Carries the product with its
-      // ORIGINAL image urls, unchanged — no base64, no server-side image fetch.
-      // The widget renders the urls directly (allowlisted via the resource CSP)
-      // and swaps an inline SVG placeholder on load failure.
+      // WIDGET-facing view (structuredContent). Carries the product with EVERY
+      // image (main + gallery images[] + variant images) delivered from
+      // Uploadcare's single CDN origin — no base64. The single-product gallery
+      // shows all images, so all are ingested (in parallel, sharing a
+      // server-side cache). The widget renders those urls directly (allowlisted
+      // via the resource CSP single origin) and swaps an inline SVG placeholder
+      // on load failure.
+      const [mainImage, images, variants] = await Promise.all([
+        product.image
+          ? toUploadcareImage(product.image.url).then((url) => ({ ...product.image!, url }))
+          : Promise.resolve(undefined),
+        Promise.all(
+          (product.images ?? []).map(async (img) => ({ ...img, url: await toUploadcareImage(img.url) })),
+        ),
+        Promise.all(
+          (product.variants ?? []).map(async (v) =>
+            v.image ? { ...v, image: { ...v.image, url: await toUploadcareImage(v.image.url) } } : v,
+          ),
+        ),
+      ]);
+
+      const widgetProduct = {
+        ...product,
+        ...(mainImage ? { image: mainImage } : {}),
+        images,
+        variants,
+      };
+
       return {
-        structuredContent: product,
+        structuredContent: widgetProduct,
         content: [{ type: 'text' as const, text: JSON.stringify(modelProduct) }],
       };
     },

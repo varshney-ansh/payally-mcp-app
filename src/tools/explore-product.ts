@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server';
 import { exploreProducts } from '../payally-api.js';
 import { ProductSchema } from '../payally-types/schema.js';
+import { toUploadcareImage, uploadcareCdnOrigin } from '../uploadcare.js';
 import { readWidgetHtml } from './widget-html.js';
 
 const WIDGET_URI = 'ui://widget/explore-product.html';
@@ -30,17 +31,20 @@ export function registerExploreProduct(server: McpServer, merchantIdFallback: st
             ui: {
               prefersBorder: true,
               csp: {
-                // structuredContent carries the ORIGINAL product image urls
-                // unchanged; the widget renders them directly (no base64, no
-                // widget-side image fetch). Only the API host remains for any
-                // widget-initiated calls (connect-src → connectDomains).
+                // structuredContent delivers every product image from
+                // Uploadcare's single CDN origin: each brand-domain image is
+                // ingested server-side (upload-from-URL → UUID) and served from
+                // the one allowlistable CDN host — no base64, no widget-side
+                // image fetch. connect-src keeps the API host for any
+                // widget-initiated calls.
                 connectDomains: ['https://api.payally.world'],
                 // resourceDomains maps to img-src (per McpUiResourceCsp).
-                // Product images come from arbitrary brand domains, so we
-                // allowlist 'https://*' for them, plus 'data:' for the inline
-                // SVG placeholder the widget swaps in when an image is blocked
-                // or fails to load.
-                resourceDomains: ['https://*', 'data:'],
+                // Product images come from arbitrary brand domains, so a host
+                // allowlist of those domains is impossible; instead every image
+                // is delivered from Uploadcare's single CDN origin. We allowlist
+                // that one concrete origin plus 'data:' for the inline-SVG
+                // placeholder the widget swaps in on load failure.
+                resourceDomains: [uploadcareCdnOrigin, 'data:'],
               },
             },
           },
@@ -94,12 +98,30 @@ export function registerExploreProduct(server: McpServer, merchantIdFallback: st
         image: p.image?.url ?? p.images?.[0]?.url,
       }));
 
-      // WIDGET-facing view (structuredContent). Carries the products with
-      // their ORIGINAL image urls, unchanged — no base64, no server-side image
-      // fetch. The widget renders the urls directly (allowlisted via the
-      // resource CSP) and swaps an inline SVG placeholder on load failure.
+      // WIDGET-facing view (structuredContent). Carries the products with the
+      // PRIMARY image (the one the card renders) delivered from Uploadcare's
+      // single CDN origin — no base64. Only the primary image is ingested per
+      // product (bounded work for a many-product carousel); the widget renders
+      // that url directly (allowlisted via the resource CSP single origin) and
+      // swaps an inline SVG placeholder on load failure. Ingests run in
+      // parallel and share a server-side cache (one ingest per unique url).
+      const widgetProducts = await Promise.all(
+        products.map(async (p) => {
+          const primary = p.image?.url ?? p.images?.[0]?.url;
+          if (!primary) return p;
+          const cdn = await toUploadcareImage(primary);
+          return {
+            ...p,
+            ...(p.image ? { image: { ...p.image, url: p.image.url === primary ? cdn : p.image.url } } : {}),
+            images: (p.images ?? []).map((img, i) =>
+              i === 0 && !p.image ? { ...img, url: cdn } : img,
+            ),
+          };
+        }),
+      );
+
       return {
-        structuredContent: { query, products, ...(nextPageToken ? { nextPageToken } : {}) },
+        structuredContent: { query, products: widgetProducts, ...(nextPageToken ? { nextPageToken } : {}) },
         content: [{ type: 'text' as const, text: JSON.stringify(modelView) }],
       };
     },
