@@ -25,10 +25,10 @@ interface ExploreOutput {
 
 /**
  * Neutral inline-SVG placeholder (mishmash achromatic: bone #f2f2f2 background,
- * graphite #a1a1a1 ShoppingBag glyph). Swapped in via <img onError> when the
- * original image url is blocked by the host CSP or fails to load, so a broken
- * image never shows the browser's broken-image glyph. data: is allowlisted in
- * the resource CSP resourceDomains for exactly this fallback.
+ * graphite #a1a1a1 ShoppingBag glyph). Swapped in via <img onError> when a
+ * proxied image url fails to load, so a broken image never shows the browser's
+ * broken-image glyph. data: is allowlisted in the resource CSP resourceDomains
+ * for exactly this fallback.
  */
 const IMAGE_PLACEHOLDER =
   "data:image/svg+xml;utf8," +
@@ -111,10 +111,11 @@ function Rating({ rating }: { rating: Product["rating"] }) {
 }
 
 /**
- * Image slot. Renders the product's ORIGINAL image url directly (allowlisted
- * via the resource CSP) — no client-side fetch/encode. If the host blocks the
- * image or it fails to load, onError swaps in the inline-SVG placeholder so a
- * broken-image glyph never appears (the guard prevents a swap loop).
+ * Image slot. Renders the product's proxied same-origin image url directly
+ * (allowlisted via the resource CSP single origin) — no client-side
+ * fetch/encode. If the image fails to load, onError swaps in the inline-SVG
+ * placeholder so a broken-image glyph never appears (the guard prevents a swap
+ * loop).
  */
 function CardImage({ product }: { product: Product }) {
   const imageUrl = product.image?.url ?? product.images?.[0]?.url;

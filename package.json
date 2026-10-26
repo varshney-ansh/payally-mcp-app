@@ -20,6 +20,8 @@
     "@modelcontextprotocol/node": "^2.1.1",
     "@modelcontextprotocol/server": "^2.3.0",
     "@openai/apps-sdk-ui": "^0.2.2",
+    "@uploadcare/cname-prefix": "^6.24.0",
+    "@uploadcare/upload-client": "^6.24.0",
     "cors": "^2.8.6",
     "dotenv": "^18.0.5",
     "embla-carousel-react": "^8.6.0",

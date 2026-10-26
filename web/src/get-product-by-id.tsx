@@ -12,10 +12,10 @@ import type { Money, Product, ProductImage } from "./types";
 
 /**
  * Neutral inline-SVG placeholder (mishmash achromatic: bone #f2f2f2 background,
- * graphite #a1a1a1 ShoppingBag glyph). Swapped in via <img onError> when the
- * original image url is blocked by the host CSP or fails to load, so a broken
- * image never shows the browser's broken-image glyph. data: is allowlisted in
- * the resource CSP resourceDomains for exactly this fallback.
+ * graphite #a1a1a1 ShoppingBag glyph). Swapped in via <img onError> when a
+ * proxied image url fails to load, so a broken image never shows the browser's
+ * broken-image glyph. data: is allowlisted in the resource CSP resourceDomains
+ * for exactly this fallback.
  */
 const IMAGE_PLACEHOLDER =
   "data:image/svg+xml;utf8," +
@@ -97,9 +97,10 @@ function Gallery({ images, title }: { images: ProductImage[]; title: string }) {
   return (
     <div className="flex w-full shrink-0 flex-col gap-2 sm:w-56">
       <div className="aspect-square w-full overflow-hidden rounded-card bg-bone">
-        {/* Render the ORIGINAL image url directly (allowlisted via the resource
-            CSP) — no client-side fetch/encode. onError swaps in the inline-SVG
-            placeholder if the host blocks the image or it fails to load. */}
+        {/* Render the proxied same-origin image url directly (allowlisted via
+            the resource CSP single origin) — no client-side fetch/encode.
+            onError swaps in the inline-SVG placeholder if the image fails to
+            load. */}
         <img
           src={main.url}
           alt={main.altText ?? title}
