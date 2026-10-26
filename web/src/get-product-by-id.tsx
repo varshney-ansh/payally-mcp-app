@@ -1,5 +1,6 @@
 import "./styles.css";
 
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { Image } from "@openai/apps-sdk-ui/components/Image";
@@ -12,7 +13,26 @@ import {
 } from "@openai/apps-sdk-ui/components/Icon";
 
 import { useToolResult } from "./useToolResult";
-import type { Money, Product } from "./types";
+import type { Money, Product, ProductImage } from "./types";
+
+/**
+ * Collects every image for a product: the main `image` first, then the
+ * `images[]` array, de-duplicated by url. Falls back to `[image]` when
+ * `images[]` is empty.
+ */
+function collectImages(product: Product): ProductImage[] {
+  const all: ProductImage[] = [];
+  if (product.image?.url) all.push(product.image);
+  for (const img of product.images ?? []) {
+    if (img?.url) all.push(img);
+  }
+  const seen = new Set<string>();
+  return all.filter((img) => {
+    if (seen.has(img.url)) return false;
+    seen.add(img.url);
+    return true;
+  });
+}
 
 function formatPrice(price?: Money): string | null {
   if (!price || typeof price.amount !== "number") return null;
@@ -46,6 +66,61 @@ function Rating({ rating }: { rating: Product["rating"] }) {
   );
 }
 
+function Gallery({
+  images,
+  title,
+}: {
+  images: ProductImage[];
+  title: string;
+}) {
+  const [active, setActive] = useState(0);
+
+  // Reset the active image whenever the underlying image set changes.
+  useEffect(() => {
+    setActive(0);
+  }, [images]);
+
+  const main = images[active] ?? images[0];
+
+  return (
+    <div className="flex w-full shrink-0 flex-col gap-2 sm:w-56">
+      <div className="aspect-square w-full overflow-hidden rounded-xl bg-token-surface-secondary">
+        <Image
+          src={main.url}
+          alt={main.altText ?? title}
+          className="h-full w-full object-cover"
+        />
+      </div>
+
+      {images.length > 1 && (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {images.map((img, i) => (
+            <button
+              key={img.url + i}
+              type="button"
+              aria-label={`Show image ${i + 1}`}
+              aria-pressed={i === active}
+              onClick={() => setActive(i)}
+              className={`aspect-square h-14 w-14 shrink-0 overflow-hidden rounded-lg border bg-token-surface-secondary transition ${
+                i === active
+                  ? "border-token-border-heavy ring-2 ring-token-border-heavy"
+                  : "border-token-border-default opacity-80 hover:opacity-100"
+              }`}
+            >
+              <Image
+                src={img.url}
+                alt={img.altText ?? `${title} thumbnail ${i + 1}`}
+                draggable={false}
+                className="h-full w-full object-cover"
+              />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GetProductById() {
   const { data } = useToolResult<Product>();
 
@@ -63,27 +138,21 @@ function GetProductById() {
     );
   }
 
-  const imageUrl = data.image?.url ?? data.images?.[0]?.url;
+  const images = collectImages(data);
   const price = formatPrice(data.price);
 
   return (
     <div className="p-2">
-      <div className="flex flex-col gap-4 overflow-hidden rounded-2xl border border-token-border-default bg-token-surface-primary sm:flex-row">
-        <div className="aspect-square w-full shrink-0 overflow-hidden bg-token-surface-secondary sm:w-56">
-          {imageUrl ? (
-            <Image
-              src={imageUrl}
-              alt={data.image?.altText ?? data.title}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-token-text-tertiary">
-              <ShoppingBag width={40} height={40} />
-            </div>
-          )}
-        </div>
+      <div className="flex flex-col gap-4 overflow-hidden rounded-2xl border border-token-border-default bg-token-surface-primary p-4 sm:flex-row">
+        {images.length > 0 ? (
+          <Gallery images={images} title={data.title} />
+        ) : (
+          <div className="flex aspect-square w-full shrink-0 items-center justify-center rounded-xl bg-token-surface-secondary text-token-text-tertiary sm:w-56">
+            <ShoppingBag width={40} height={40} />
+          </div>
+        )}
 
-        <div className="flex flex-1 flex-col gap-2 p-4">
+        <div className="flex flex-1 flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             {data.category && (
               <Badge color="discovery" variant="soft">

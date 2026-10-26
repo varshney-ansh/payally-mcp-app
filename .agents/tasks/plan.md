@@ -15,10 +15,21 @@ One user-confirmed decision vs the original task brief (authoritative):
   `merchantIdFallback` arg). Do NOT read `authInfo.extra.paypal_merchant_id`. The new tool callbacks
   do not read `authInfo` at all, and `resolveMerchantId(authInfo, fallback)` becomes unused.
 
-Explicitly NOT changed (the user did NOT ask to remove AuthInfo):
-- KEEP the `AuthInfo` tool in `src/index.ts` exactly as-is, along with all Auth0 middleware and the
-  `getUserProfile` import it uses. Just ADD the two new tool registrations next to it in the `/mcp`
-  handler.
+AuthInfo tool — user-clarified decision (authoritative):
+- REMOVE only the `AuthInfo` tool registration (`mcpServer.registerTool('AuthInfo', ...)`) from
+  `src/index.ts`. It is intentionally gone. The now-unused `getUserProfile` and `Auth` imports are
+  dropped from `index.ts` to keep `npx tsc --noEmit` clean. `src/utils.ts` (getUserProfile +
+  getManagementToken) stays in place as an unused export.
+- KEEP all auth infrastructure fully intact: everything in `src/auth0.ts`, the `auth0Mcp` middleware,
+  the `requireAuth` guard, and the `POST /mcp` protection. The MCP server MUST remain OAuth-protected.
+  Do NOT modify `auth0.ts` or the middleware.
+- ADD the two new tool registrations inside the `/mcp` handler.
+
+getproductbyid card — user-clarified requirement:
+- The inline card must show ALL product images: a large main image plus a horizontal thumbnail strip
+  below it (built from the product's `image` + `images[]`, de-duplicated; falls back to `[image]` when
+  `images[]` is empty; a single image renders with no thumbnail row). READ-ONLY: thumbnails only swap
+  which image is shown large via local widget state — NO tool calls, NO follow-up messages.
 
 ## Key findings from exploration (ground truth for the implementer)
 
@@ -97,7 +108,8 @@ Wire-through:
   tools use env-only merchant id, `resolveMerchantId` becomes unused — remove it too, along with the
   `Auth`/`McpServer` imports it needed. Leave `src/tools/shared.ts` either deleted or reduced with no
   dead code. No code may reference the deleted files.
-- DO NOT touch the `AuthInfo` tool in `src/index.ts` or the `getUserProfile` import — leave them as-is.
+- REMOVE the `AuthInfo` tool registration from `src/index.ts` and the now-unused `getUserProfile` /
+  `Auth` imports. Keep `src/auth0.ts` and all Auth0 middleware untouched (OAuth protection stays).
 
 ---
 
@@ -138,9 +150,13 @@ Wire-through:
       Files: `web/src/explore-product.tsx`
       Verify: builds in step 6.
 
-- [ ] 5. Implement the getproductbyid card widget (read-only).
-      Create `web/src/get-product-by-id.tsx`: entry mounts into `#root`. Renders one product — large
-      `Image`, title, seller, `category` (Badge), description, price, rating if present. Purely visual.
+- [ ] 5. Implement the getproductbyid card widget (read-only, all images).
+      Create `web/src/get-product-by-id.tsx`: entry mounts into `#root`. Renders one product — an image
+      GALLERY showing ALL images (collect `image` + `images[]`, de-dupe by url, fall back to `[image]`),
+      with a large main `Image` and a horizontal thumbnail strip below it; clicking a thumbnail swaps the
+      large image via local `useState` only (READ-ONLY, no tool calls, no follow-ups). A single image
+      renders with no thumbnail row. Plus title, seller, `category` (Badge), description, price, rating
+      if present. Purely visual.
       Files: `web/src/get-product-by-id.tsx`
       Verify: builds in step 6.
 
@@ -213,12 +229,13 @@ Wire-through:
       `src/ui/get-product-by-id.html.ts` (delete)
       Verify: `npx tsc --noEmit` passes with no references to deleted symbols.
 
-- [ ] 11. Wire the two new tools in `src/index.ts` (keep AuthInfo).
-      Inside the per-request `/mcp` handler, after creating `mcpServer`, LEAVE the existing `AuthInfo`
-      `registerTool` block and the `getUserProfile` import exactly as-is. ADD, next to it,
+- [ ] 11. Wire the two new tools in `src/index.ts` (AuthInfo tool removed, auth middleware kept).
+      Inside the per-request `/mcp` handler, after creating `mcpServer`, register
       `registerExploreProduct(mcpServer, PAYPAL_MERCHANT_ID)` and
-      `registerGetProductById(mcpServer, PAYPAL_MERCHANT_ID)`, plus the two imports. Keep all Auth0
-      middleware and the `requireAuth` guard untouched.
+      `registerGetProductById(mcpServer, PAYPAL_MERCHANT_ID)`. The `AuthInfo` tool registration is
+      intentionally REMOVED, and the now-unused `getUserProfile` / `Auth` imports are dropped to keep
+      `tsc --noEmit` clean. Keep ALL Auth0 middleware (`auth0Mcp`), the `requireAuth` guard, and the
+      `POST /mcp` protection untouched — the server stays OAuth-protected.
       Files: `src/index.ts`
       Verify: `npx tsc --noEmit` passes.
 
