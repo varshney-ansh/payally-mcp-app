@@ -5,8 +5,8 @@ import type { NextFunction, Request, Response } from 'express';
 import { McpServer } from '@modelcontextprotocol/server';
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import { auth0Mcp } from './auth0.js';
-import type { Auth } from './types.js';
-import { getUserProfile } from './utils.js';
+import { registerExploreProduct } from './tools/explore-product.js';
+import { registerGetProductById } from './tools/get-product-by-id.js';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const MCP_SERVER_URL = process.env.MCP_SERVER_URL ?? `http://localhost:${PORT}`;
@@ -52,24 +52,8 @@ app.post('/mcp', requireAuth, async (req: Request, res: Response) => {
     try {
         const mcpServer = new McpServer({ name: MCP_SERVER_RESOURCE_NAME, version: '1.0.0' });
 
-        mcpServer.registerTool(
-            'AuthInfo',
-            { description: 'logs out the authInfo' },
-            async (ctx) => {
-                const authInfo = ctx.http?.authInfo as Auth | undefined;
-                const profile = authInfo ? await getUserProfile(authInfo.extra.sub, AUTH0_DOMAIN, MGMT_CLIENT_ID, MGMT_CLIENT_SECRET) : null;
-                const merchantId = authInfo?.extra.paypal_merchant_id ?? PAYPAL_MERCHANT_ID;
-
-                return {
-                    content: [
-                        {
-                            type: 'text' as const,
-                            text: JSON.stringify({ authInfo, profile, merchantId }),
-                        },
-                    ],
-                };
-            }
-        );
+        registerExploreProduct(mcpServer, PAYPAL_MERCHANT_ID);
+        registerGetProductById(mcpServer, PAYPAL_MERCHANT_ID);
 
         const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
 
