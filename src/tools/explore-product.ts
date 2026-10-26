@@ -30,8 +30,12 @@ export function registerExploreProduct(server: McpServer, merchantIdFallback: st
             ui: {
               prefersBorder: true,
               csp: {
-                connectDomains: ['https://api.payally.world'],
-                // Product images come from arbitrary CDNs, so allow any https host.
+                // The widget fetches each product image client-side and encodes
+                // it to a base64 data URI (connect-src). Images come from
+                // arbitrary CDNs, so allow any https host. If a host rejects the
+                // 'https://*' wildcard form, change it to '*'.
+                connectDomains: ['https://api.payally.world', 'https://*'],
+                // Direct-URL <img> fallback (img-src) when base64 encoding fails.
                 resourceDomains: ['https://*'],
               },
             },

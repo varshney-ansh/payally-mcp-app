@@ -1,6 +1,6 @@
 import "./styles.css";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import useEmblaCarousel from "embla-carousel-react";
 
@@ -15,6 +15,8 @@ import {
 } from "@openai/apps-sdk-ui/components/Icon";
 
 import { useToolResult } from "./useToolResult";
+import { useBase64Image } from "./useBase64Image";
+import type { App } from "@modelcontextprotocol/ext-apps/react";
 import type { Money, Product } from "./types";
 
 interface ExploreOutput {
@@ -35,6 +37,37 @@ function formatPrice(price?: Money): string | null {
   }
 }
 
+/**
+ * Opens a product via the standard ext-apps bridge: prefer a direct
+ * `getproductbyid` server-tool call when the host can proxy tool calls,
+ * otherwise fall back to a plain follow-up message. No ChatGPT-only APIs.
+ */
+async function openProduct(app: App | null, productId: string): Promise<void> {
+  if (!app) return;
+
+  if (app.getHostCapabilities()?.serverTools) {
+    try {
+      const result = await app.callServerTool({
+        name: "getproductbyid",
+        arguments: { productId },
+      });
+      if (!result.isError) return;
+      // Tool reported an error — fall through to the message fallback.
+    } catch {
+      // Transport/host failure — fall through to the message fallback.
+    }
+  }
+
+  try {
+    await app.sendMessage({
+      role: "user",
+      content: [{ type: "text", text: `Show me product ${productId}` }],
+    });
+  } catch {
+    // Nothing more we can do from the widget; swallow so the UI stays stable.
+  }
+}
+
 function Rating({ rating }: { rating: Product["rating"] }) {
   if (!rating || typeof rating.value !== "number") return null;
   const rounded = Math.round(rating.value);
@@ -46,48 +79,86 @@ function Rating({ rating }: { rating: Product["rating"] }) {
     ),
   );
   return (
-    <div className="flex items-center gap-1 text-xs text-token-text-secondary">
-      <span className="flex items-center gap-0.5 text-amber-500">{stars}</span>
+    <div className="flex items-center gap-1 text-caption text-iron">
+      {/* Stars stay achromatic (ink filled / smoke empty) — amber is reserved for pills. */}
+      <span className="flex items-center gap-0.5 text-ink">{stars}</span>
       {typeof rating.count === "number" && (
-        <span>({rating.count})</span>
+        <span className="text-iron">({rating.count})</span>
       )}
     </div>
   );
 }
 
-function ProductCard({ product }: { product: Product }) {
+/** Image slot with a loading skeleton while the base64 encode is in flight. */
+function CardImage({ product }: { product: Product }) {
   const imageUrl = product.image?.url ?? product.images?.[0]?.url;
-  const price = formatPrice(product.price);
+  const { src, status } = useBase64Image(imageUrl);
 
   return (
-    <div className="shrink-0 basis-[220px] overflow-hidden rounded-2xl border border-token-border-default bg-token-surface-primary">
-      <div className="aspect-square w-full overflow-hidden bg-token-surface-secondary">
-        {imageUrl ? (
-          <Image
-            src={imageUrl}
-            alt={product.image?.altText ?? product.title}
-            draggable={false}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-token-text-tertiary">
-            <ShoppingBag width={32} height={32} />
-          </div>
-        )}
-      </div>
-      <div className="flex flex-col gap-1 p-3">
-        <div className="line-clamp-2 text-sm font-medium text-token-text-primary">
+    <div className="aspect-square w-full overflow-hidden rounded-card bg-bone">
+      {!imageUrl ? (
+        <div className="flex h-full w-full items-center justify-center text-graphite">
+          <ShoppingBag width={32} height={32} />
+        </div>
+      ) : status === "loading" ? (
+        <div className="h-full w-full animate-pulse rounded-card bg-bone" />
+      ) : (
+        <Image
+          src={src}
+          alt={product.image?.altText ?? product.title}
+          draggable={false}
+          className="h-full w-full rounded-card object-cover"
+        />
+      )}
+    </div>
+  );
+}
+
+function ProductCard({
+  product,
+  onOpen,
+  canOpen,
+}: {
+  product: Product;
+  onOpen: (productId: string) => void;
+  canOpen: boolean;
+}) {
+  const price = formatPrice(product.price);
+
+  const activate = () => {
+    if (!canOpen) return;
+    onOpen(product.id);
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={canOpen ? 0 : -1}
+      aria-disabled={!canOpen}
+      aria-label={`Show details for ${product.title}`}
+      onClick={activate}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          activate();
+        }
+      }}
+      className={`shrink-0 basis-[220px] overflow-hidden rounded-card border border-ash bg-paper-white p-2 transition ${
+        canOpen
+          ? "cursor-pointer hover:border-ink active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-tag"
+          : "cursor-default"
+      }`}
+    >
+      <CardImage product={product} />
+      <div className="flex flex-col gap-2 p-2">
+        <div className="line-clamp-2 text-body font-medium text-ink">
           {product.title}
         </div>
         {product.seller && (
-          <div className="truncate text-xs text-token-text-secondary">
-            {product.seller}
-          </div>
+          <div className="truncate text-body-sm text-iron">{product.seller}</div>
         )}
         {price && (
-          <div className="mt-0.5 text-sm font-semibold text-token-text-primary">
-            {price}
-          </div>
+          <div className="mt-0.5 text-body-sm text-ink">{price}</div>
         )}
         <Rating rating={product.rating} />
       </div>
@@ -95,9 +166,36 @@ function ProductCard({ product }: { product: Product }) {
   );
 }
 
+/** A single pulsing placeholder card shown while the tool result is pending. */
+function SkeletonCard() {
+  return (
+    <div className="shrink-0 basis-[220px] overflow-hidden rounded-card border border-ash bg-paper-white p-2">
+      <div className="aspect-square w-full animate-pulse rounded-card bg-bone" />
+      <div className="flex flex-col gap-2 p-2">
+        <div className="h-3.5 w-4/5 animate-pulse rounded-card bg-bone" />
+        <div className="h-3 w-2/5 animate-pulse rounded-card bg-bone" />
+        <div className="h-3.5 w-1/3 animate-pulse rounded-card bg-bone" />
+      </div>
+    </div>
+  );
+}
+
+function SkeletonRow() {
+  return (
+    <div className="w-full p-2">
+      <div className="flex gap-3 overflow-hidden">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <SkeletonCard key={i} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ExploreProduct() {
-  const { data } = useToolResult<ExploreOutput>();
+  const { data, app } = useToolResult<ExploreOutput>();
   const products = Array.isArray(data?.products) ? data!.products : [];
+  const canOpen = app != null;
 
   const [emblaRef, emblaApi] = useEmblaCarousel({
     align: "start",
@@ -108,6 +206,11 @@ function ExploreProduct() {
 
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
+
+  // Suppress the click that fires at the end of a drag so dragging the
+  // carousel never accidentally opens a product.
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
+  const draggedRef = useRef(false);
 
   const onSelect = useCallback(() => {
     if (!emblaApi) return;
@@ -124,17 +227,44 @@ function ExploreProduct() {
     };
   }, [emblaApi, onSelect]);
 
-  if (!data || products.length === 0) {
+  const handlePointerDown = (e: React.PointerEvent) => {
+    pointerStart.current = { x: e.clientX, y: e.clientY };
+    draggedRef.current = false;
+  };
+  const handlePointerMove = (e: React.PointerEvent) => {
+    const start = pointerStart.current;
+    if (!start) return;
+    if (Math.abs(e.clientX - start.x) > 6 || Math.abs(e.clientY - start.y) > 6) {
+      draggedRef.current = true;
+    }
+  };
+
+  const openIfNotDragging = (productId: string) => {
+    if (draggedRef.current) return;
+    void openProduct(app, productId);
+  };
+
+  // Tool result not yet delivered: show a skeleton carousel row.
+  if (!data) {
+    return <SkeletonRow />;
+  }
+
+  // Data arrived but there are genuinely no products.
+  if (products.length === 0) {
     return (
       <EmptyMessage>
         <EmptyMessage.Icon>
           <ShoppingBag />
         </EmptyMessage.Icon>
-        <EmptyMessage.Title>No products to show</EmptyMessage.Title>
+        <EmptyMessage.Title>
+          <span className="text-ink">No products to show</span>
+        </EmptyMessage.Title>
         <EmptyMessage.Description>
-          {data?.query
-            ? `Nothing matched “${data.query}”.`
-            : "Results will appear here once the search runs."}
+          <span className="text-iron">
+            {data.query
+              ? `Nothing matched “${data.query}”.`
+              : "Results will appear here once the search runs."}
+          </span>
         </EmptyMessage.Description>
       </EmptyMessage>
     );
@@ -142,10 +272,20 @@ function ExploreProduct() {
 
   return (
     <div className="relative w-full p-2">
-      <div className="overflow-hidden" ref={emblaRef}>
+      <div
+        className="overflow-hidden"
+        ref={emblaRef}
+        onPointerDownCapture={handlePointerDown}
+        onPointerMoveCapture={handlePointerMove}
+      >
         <div className="flex gap-3">
           {products.map((product, i) => (
-            <ProductCard key={product.id ?? i} product={product} />
+            <ProductCard
+              key={product.id ?? i}
+              product={product}
+              onOpen={openIfNotDragging}
+              canOpen={canOpen}
+            />
           ))}
         </div>
       </div>
@@ -155,7 +295,7 @@ function ExploreProduct() {
         aria-label="Previous"
         onClick={() => emblaApi?.scrollPrev()}
         disabled={!canScrollPrev}
-        className="absolute left-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-token-border-default bg-token-surface-primary shadow-sm transition disabled:pointer-events-none disabled:opacity-0"
+        className="absolute left-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-pill border border-ash bg-paper-white text-ink transition disabled:pointer-events-none disabled:opacity-0"
       >
         <ChevronLeft width={18} height={18} />
       </button>
@@ -164,7 +304,7 @@ function ExploreProduct() {
         aria-label="Next"
         onClick={() => emblaApi?.scrollNext()}
         disabled={!canScrollNext}
-        className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-token-border-default bg-token-surface-primary shadow-sm transition disabled:pointer-events-none disabled:opacity-0"
+        className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-pill border border-ash bg-paper-white text-ink transition disabled:pointer-events-none disabled:opacity-0"
       >
         <ChevronRight width={18} height={18} />
       </button>

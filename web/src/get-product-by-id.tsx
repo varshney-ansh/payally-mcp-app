@@ -6,13 +6,10 @@ import { createRoot } from "react-dom/client";
 import { Image } from "@openai/apps-sdk-ui/components/Image";
 import { Badge } from "@openai/apps-sdk-ui/components/Badge";
 import { EmptyMessage } from "@openai/apps-sdk-ui/components/EmptyMessage";
-import {
-  ShoppingBag,
-  Star,
-  StarFilled,
-} from "@openai/apps-sdk-ui/components/Icon";
+import { ShoppingBag, Star, StarFilled } from "@openai/apps-sdk-ui/components/Icon";
 
 import { useToolResult } from "./useToolResult";
+import { useBase64Image } from "./useBase64Image";
 import type { Money, Product, ProductImage } from "./types";
 
 /**
@@ -46,6 +43,32 @@ function formatPrice(price?: Money): string | null {
   }
 }
 
+/**
+ * Presentational image that encodes its URL to a base64 data URI at render time
+ * (via `useBase64Image`) and shows a pulse skeleton while encoding. On
+ * encode/fetch failure it falls back to loading the original URL directly.
+ * Kept as a component so the hook can be used per-image inside a `.map`.
+ */
+function Base64Img({
+  url,
+  altText,
+  className,
+  draggable,
+}: {
+  url: string;
+  altText?: string;
+  className?: string;
+  draggable?: boolean;
+}) {
+  const { src, status } = useBase64Image(url);
+  if (status === "loading") {
+    return <div className={`${className ?? ""} animate-pulse bg-bone`} />;
+  }
+  return (
+    <Image src={src} alt={altText} draggable={draggable} className={className} />
+  );
+}
+
 function Rating({ rating }: { rating: Product["rating"] }) {
   if (!rating || typeof rating.value !== "number") return null;
   const rounded = Math.round(rating.value);
@@ -57,22 +80,19 @@ function Rating({ rating }: { rating: Product["rating"] }) {
     ),
   );
   return (
-    <div className="flex items-center gap-1.5 text-sm text-token-text-secondary">
-      <span className="flex items-center gap-0.5 text-amber-500">{stars}</span>
+    <div className="flex items-center gap-1.5 text-body-sm text-iron">
+      {/* Achromatic stars (ink filled / smoke empty) — amber reserved for pills. */}
+      <span className="flex items-center gap-0.5 text-ink">{stars}</span>
       {typeof rating.count === "number" && (
-        <span>{rating.value.toFixed(1)} ({rating.count})</span>
+        <span className="text-iron">
+          {rating.value.toFixed(1)} ({rating.count})
+        </span>
       )}
     </div>
   );
 }
 
-function Gallery({
-  images,
-  title,
-}: {
-  images: ProductImage[];
-  title: string;
-}) {
+function Gallery({ images, title }: { images: ProductImage[]; title: string }) {
   const [active, setActive] = useState(0);
 
   // Reset the active image whenever the underlying image set changes.
@@ -84,10 +104,10 @@ function Gallery({
 
   return (
     <div className="flex w-full shrink-0 flex-col gap-2 sm:w-56">
-      <div className="aspect-square w-full overflow-hidden rounded-xl bg-token-surface-secondary">
-        <Image
-          src={main.url}
-          alt={main.altText ?? title}
+      <div className="aspect-square w-full overflow-hidden rounded-card bg-bone">
+        <Base64Img
+          url={main.url}
+          altText={main.altText ?? title}
           className="h-full w-full object-cover"
         />
       </div>
@@ -101,15 +121,15 @@ function Gallery({
               aria-label={`Show image ${i + 1}`}
               aria-pressed={i === active}
               onClick={() => setActive(i)}
-              className={`aspect-square h-14 w-14 shrink-0 overflow-hidden rounded-lg border bg-token-surface-secondary transition ${
+              className={`aspect-square h-14 w-14 shrink-0 overflow-hidden rounded-card border bg-bone transition ${
                 i === active
-                  ? "border-token-border-heavy ring-2 ring-token-border-heavy"
-                  : "border-token-border-default opacity-80 hover:opacity-100"
+                  ? "border-amber-tag ring-1 ring-amber-tag"
+                  : "border-ash opacity-80 hover:opacity-100"
               }`}
             >
-              <Image
-                src={img.url}
-                alt={img.altText ?? `${title} thumbnail ${i + 1}`}
+              <Base64Img
+                url={img.url}
+                altText={img.altText ?? `${title} thumbnail ${i + 1}`}
                 draggable={false}
                 className="h-full w-full object-cover"
               />
@@ -121,21 +141,35 @@ function Gallery({
   );
 }
 
+/** Pulsing placeholder matching the final card layout, shown while pending. */
+function SkeletonCard() {
+  return (
+    <div className="p-2">
+      <div className="flex flex-col gap-6 overflow-hidden rounded-card border border-ash bg-paper-white p-6 sm:flex-row">
+        <div className="aspect-square w-full shrink-0 animate-pulse rounded-card bg-bone sm:w-56" />
+        <div className="flex flex-1 flex-col gap-3 pt-1">
+          <div className="h-5 w-20 animate-pulse rounded-pill bg-bone" />
+          <div className="h-6 w-3/4 animate-pulse rounded-card bg-bone" />
+          <div className="h-4 w-1/3 animate-pulse rounded-card bg-bone" />
+          <div className="h-4 w-1/4 animate-pulse rounded-card bg-bone" />
+          <div className="h-7 w-1/3 animate-pulse rounded-card bg-bone" />
+          <div className="mt-1 flex flex-col gap-2">
+            <div className="h-3.5 w-full animate-pulse rounded-card bg-bone" />
+            <div className="h-3.5 w-5/6 animate-pulse rounded-card bg-bone" />
+            <div className="h-3.5 w-2/3 animate-pulse rounded-card bg-bone" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GetProductById() {
   const { data } = useToolResult<Product>();
 
+  // Tool result not yet delivered: show a skeleton card (not an empty state).
   if (!data || !data.id) {
-    return (
-      <EmptyMessage>
-        <EmptyMessage.Icon>
-          <ShoppingBag />
-        </EmptyMessage.Icon>
-        <EmptyMessage.Title>Loading product…</EmptyMessage.Title>
-        <EmptyMessage.Description>
-          The product details will appear here.
-        </EmptyMessage.Description>
-      </EmptyMessage>
-    );
+    return <SkeletonCard />;
   }
 
   const images = collectImages(data);
@@ -143,11 +177,11 @@ function GetProductById() {
 
   return (
     <div className="p-2">
-      <div className="flex flex-col gap-4 overflow-hidden rounded-2xl border border-token-border-default bg-token-surface-primary p-4 sm:flex-row">
+      <div className="flex flex-col gap-6 overflow-hidden rounded-card border border-ash bg-paper-white p-6 sm:flex-row">
         {images.length > 0 ? (
           <Gallery images={images} title={data.title} />
         ) : (
-          <div className="flex aspect-square w-full shrink-0 items-center justify-center rounded-xl bg-token-surface-secondary text-token-text-tertiary sm:w-56">
+          <div className="flex aspect-square w-full shrink-0 items-center justify-center rounded-card bg-bone text-graphite sm:w-56">
             <ShoppingBag width={40} height={40} />
           </div>
         )}
@@ -155,32 +189,33 @@ function GetProductById() {
         <div className="flex flex-1 flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             {data.category && (
-              <Badge color="discovery" variant="soft">
+              // mishmash pill: amber surface, ink text, fully rounded.
+              // Restyled via tokens only — same Badge component, same structure.
+              <Badge
+                color="discovery"
+                variant="soft"
+                pill
+                className="!bg-amber-tag !text-ink text-caption font-semibold"
+              >
                 {data.category}
               </Badge>
             )}
           </div>
 
-          <h2 className="text-lg font-semibold text-token-text-primary">
-            {data.title}
-          </h2>
+          <h2 className="text-subheading font-medium text-ink">{data.title}</h2>
 
           {data.seller && (
-            <div className="text-sm text-token-text-secondary">
-              {data.seller}
-            </div>
+            <div className="text-body-sm text-iron">{data.seller}</div>
           )}
 
           <Rating rating={data.rating} />
 
           {price && (
-            <div className="text-xl font-semibold text-token-text-primary">
-              {price}
-            </div>
+            <div className="text-heading-sm font-medium text-ink">{price}</div>
           )}
 
           {data.description && (
-            <p className="mt-1 text-sm leading-relaxed text-token-text-secondary">
+            <p className="mt-1 text-body-sm leading-relaxed text-iron">
               {data.description}
             </p>
           )}

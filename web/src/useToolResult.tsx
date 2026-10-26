@@ -16,7 +16,11 @@ import {
  * The returned `data` is UNTRUSTED host input — callers must guard every
  * field before rendering.
  */
-export function useToolResult<T>(): { data: T | null; isConnected: boolean } {
+export function useToolResult<T>(): {
+  data: T | null;
+  isConnected: boolean;
+  app: App | null;
+} {
   const [data, setData] = useState<T | null>(null);
 
   const { app, isConnected } = useApp({
@@ -40,7 +44,9 @@ export function useToolResult<T>(): { data: T | null; isConnected: boolean } {
   // immediately on mount.
   useHostStyles(app, app?.getHostContext());
 
-  return { data, isConnected };
+  // `app` is exposed so interactive widgets can call server tools
+  // (e.g. the explore-product carousel invoking `getproductbyid`).
+  return { data, isConnected, app };
 }
 
 /**
