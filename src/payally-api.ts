@@ -57,16 +57,12 @@ export interface CheckoutItem {
 }
 
 /**
- * Creates a checkout for the given buyer + merchant with the cart's items.
- * POSTs to `v1/checkout` and returns whatever the endpoint responds with
- * (parsed JSON) — that becomes the tool's response.
+ * POSTs JSON to a PayAlly endpoint and returns the parsed response. Shared by
+ * the checkout + order tools. Throws with status + body on a non-2xx so the
+ * caller can surface a clear error.
  */
-export async function createCheckout(body: {
-  userEmail: string;
-  merchantId: string;
-  items: CheckoutItem[];
-}): Promise<unknown> {
-  const res = await fetch(`${API_BASE}/checkout`, {
+async function postJson(path: string, body: unknown, label: string): Promise<unknown> {
+  const res = await fetch(`${API_BASE}/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
@@ -80,10 +76,37 @@ export async function createCheckout(body: {
   }
   if (!res.ok) {
     throw new Error(
-      `PayAlly checkout ${res.status} ${res.statusText}: ${
+      `PayAlly ${label} ${res.status} ${res.statusText}: ${
         typeof parsed === 'string' ? parsed.slice(0, 500) : JSON.stringify(parsed).slice(0, 500)
       }`,
     );
   }
   return parsed;
+}
+
+/**
+ * Creates a checkout for the given buyer + merchant with the cart's items.
+ * POSTs to `v1/checkout` and returns whatever the endpoint responds with
+ * (parsed JSON) — that becomes the tool's response.
+ */
+export async function createCheckout(body: {
+  userEmail: string;
+  merchantId: string;
+  items: CheckoutItem[];
+}): Promise<unknown> {
+  return postJson('checkout', body, 'checkout');
+}
+
+/** Lists the orders a buyer placed with a merchant. POSTs to `v1/show-orders`. */
+export async function listOrders(body: { merchantId: string; email: string }): Promise<unknown> {
+  return postJson('show-orders', body, 'show-orders');
+}
+
+/** Fetches one order's details. POSTs to `v1/show-order-by-id`. */
+export async function getOrderById(body: {
+  merchantId: string;
+  email: string;
+  orderId: string;
+}): Promise<unknown> {
+  return postJson('show-order-by-id', body, 'show-order-by-id');
 }

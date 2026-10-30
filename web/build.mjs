@@ -19,7 +19,7 @@ const webDir = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(webDir, "src");
 const distDir = join(webDir, "dist");
 
-const ENTRIES = ["explore-product", "get-product-by-id"];
+const ENTRIES = ["explore-product", "get-product-by-id", "list-orders", "order-detail"];
 
 mkdirSync(distDir, { recursive: true });
 

@@ -3,8 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { CartStore, ResolvedLineItem } from '../cart-store.js';
 import type { ProductStore } from '../product-store.js';
 import type { Cart } from '../payally-types/cart.js';
-import type { Auth } from '../types.js';
-import { getUserProfile, extractEmail } from '../utils.js';
+import { resolveUserEmail, type AuthConfig } from './auth.js';
 import { createCheckout, type CheckoutItem } from '../payally-api.js';
 import { CartAddItemSchema, CartItemUpdateSchema, ITEM_CATEGORIES } from '../payally-types/cart.js';
 import type { CartLineItem } from '../payally-types/cart.js';
@@ -26,46 +25,19 @@ import type { CartLineItem } from '../payally-types/cart.js';
  * used (and created on first add).
  */
 
-/** Auth0 config needed to resolve the buyer's profile (email) from `sub`. */
-export interface CartAuthConfig {
-  domain: string;
-  mgmtClientId: string;
-  mgmtClientSecret: string;
-  /** Canonical tenant Management API audience (custom-domain audience → 403). */
-  mgmtAudience?: string;
-}
+/**
+ * Cart auth config. Re-exported alias of the shared `AuthConfig` so existing
+ * callers (index.ts) keep working.
+ */
+export type CartAuthConfig = AuthConfig;
 
 /**
- * Resolves the authenticated buyer's email.
- *
- * Auth is read from the FIRST handler argument (`ctx.http.authInfo`), the
- * `ServerContext` — the same place the reference `AuthInfo` tool read it. The
- * token has no email claim, so the email comes from the Auth0 Management API
- * profile looked up by `sub`.
+ * Resolves the authenticated buyer's email for CART operations. Carts are
+ * merely keyed by the buyer, so when the profile has no email we fall back to
+ * the stable `sub` (so the cart still works). Delegates to the shared helper.
  */
 async function requireUserEmail(ctx: unknown, auth: CartAuthConfig): Promise<string> {
-  const authInfo = (ctx as { http?: { authInfo?: Auth } } | undefined)?.http?.authInfo;
-  const sub = authInfo?.extra?.sub;
-  if (typeof sub !== 'string' || sub.length === 0) {
-    throw new Error('No authenticated user on the request. Sign in to use the cart.');
-  }
-
-  const profile = await getUserProfile(
-    sub,
-    auth.domain,
-    auth.mgmtClientId,
-    auth.mgmtClientSecret,
-    auth.mgmtAudience,
-  );
-  const email = extractEmail(profile);
-  if (!email) {
-    // Last-resort fallback: key the cart on the stable `sub` when the profile
-    // genuinely has no email (so the cart still works). The server log from
-    // getUserProfile shows WHY the email was missing (403 scope / 404 / etc.).
-    console.warn(`[cart] No email for sub=${sub}; falling back to sub as buyer key.`);
-    return sub;
-  }
-  return email;
+  return resolveUserEmail(ctx, auth, { allowSubFallback: true });
 }
 
 /** Compact, model-friendly view of a cart returned in the `content` channel. */

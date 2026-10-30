@@ -43,3 +43,41 @@ export interface Product {
 
   rating?: { value: number; count: number };
 }
+
+/**
+ * Order model — mirrors the PayAlly order endpoints' response items.
+ * (show-orders → { orders: Order[] }, show-order-by-id → { order: Order }.)
+ */
+export interface OrderItem {
+  name: string;
+  quantity: string;
+  unitAmount: string;   // "84.99"
+  sku?: string | null;
+  category?: string;
+}
+
+export interface Order {
+  id: string;
+  paypalMerchantId?: string;
+  userEmail?: string;
+  status: string;         // "COMPLETED"
+  currencyCode: string;   // "USD"
+  itemTotal: string;
+  platformFee?: string;
+  grandTotal: string;
+  captureId?: string;
+  captureStatus?: string;
+  payerEmail?: string;
+  payerName?: string;
+  items: OrderItem[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ListOrdersOutput {
+  orders: Order[];
+}
+
+export interface OrderDetailOutput {
+  order: Order;
+}

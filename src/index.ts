@@ -8,6 +8,7 @@ import { auth0Mcp } from './auth0.js';
 import { registerExploreProduct } from './tools/explore-product.js';
 import { registerGetProductById } from './tools/get-product-by-id.js';
 import { registerCartTools } from './tools/cart.js';
+import { registerOrderTools } from './tools/orders.js';
 import { CartStore } from './cart-store.js';
 import { ProductStore } from './product-store.js';
 import { getUserProfile, extractEmail } from './utils.js';
@@ -175,6 +176,14 @@ app.post('/mcp', requireAuth, async (req: Request, res: Response) => {
         } else {
             console.warn('Valkey client unavailable — cart tools not registered.');
         }
+
+        // Order-history tools: no Valkey needed; call the PayAlly order endpoints.
+        registerOrderTools(mcpServer, PAYPAL_MERCHANT_ID, {
+            domain: AUTH0_DOMAIN,
+            mgmtClientId: MGMT_CLIENT_ID,
+            mgmtClientSecret: MGMT_CLIENT_SECRET,
+            mgmtAudience: MGMT_AUDIENCE,
+        });
 
         const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
 
