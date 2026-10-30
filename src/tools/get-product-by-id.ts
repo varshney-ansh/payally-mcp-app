@@ -15,7 +15,11 @@ const WIDGET_URI = 'ui://widget/get-product-by-id.html';
  * (the `merchantIdFallback` arg) and is never exposed as an argument nor read
  * from auth info.
  */
-export function registerGetProductById(server: McpServer, merchantIdFallback: string) {
+export function registerGetProductById(
+  server: McpServer,
+  merchantIdFallback: string,
+  productStore?: import('../product-store.js').ProductStore,
+) {
   registerAppResource(
     server,
     'get-product-by-id-widget',
@@ -81,6 +85,11 @@ export function registerGetProductById(server: McpServer, merchantIdFallback: st
     async ({ productId }) => {
       const merchantId = merchantIdFallback;
       const product = await getProductById(productId, merchantId);
+
+      // Cache authoritative details keyed merchantId:productId so the cart tools
+      // can build trusted line items from a productId alone (no model-supplied
+      // price/name). Best-effort (fire-and-forget).
+      void productStore?.cacheProduct(product, merchantId);
 
       // MODEL-facing view (`content` text channel — surfaced to the model).
       // Full product JSON with ORIGINAL http(s) image urls; NEVER base64 blobs.

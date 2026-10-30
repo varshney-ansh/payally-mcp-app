@@ -1,8 +1,32 @@
 export interface UserProfile {
-    sub: string;
+    sub?: string;
+    user_id?: string;
     name?: string;
     picture?: string;
     email?: string;
+    /** Federated/social logins carry per-connection identities; email often lives here. */
+    identities?: Array<{
+        connection?: string;
+        provider?: string;
+        user_id?: string;
+        profileData?: { email?: string; name?: string; picture?: string };
+    }>;
+    [key: string]: unknown;
+}
+
+/**
+ * Extracts the user's email from an Auth0 Management API user record,
+ * checking the common locations: top-level `email`, then each federated
+ * identity's `profileData.email`. Returns undefined if none is present.
+ */
+export function extractEmail(profile: UserProfile | null): string | undefined {
+    if (!profile) return undefined;
+    if (typeof profile.email === 'string' && profile.email.length > 0) return profile.email;
+    for (const id of profile.identities ?? []) {
+        const e = id.profileData?.email;
+        if (typeof e === 'string' && e.length > 0) return e;
+    }
+    return undefined;
 }
 
 // Simple in-memory cache for the Management API token to avoid re-fetching on every request.
@@ -49,14 +73,22 @@ export async function getUserProfile(
     clientId: string,
     clientSecret: string,
 ): Promise<UserProfile | null> {
-    if (!clientId || !clientSecret) return null;
+    if (!clientId || !clientSecret) {
+        console.warn('[getUserProfile] Missing Management API credentials.');
+        return null;
+    }
     try {
         const mgmtToken = await getManagementToken(domain, clientId, clientSecret);
         const encodedSub = encodeURIComponent(sub);
         const res = await fetch(`https://${domain}/api/v2/users/${encodedSub}`, {
             headers: { Authorization: `Bearer ${mgmtToken}` },
         });
-        if (!res.ok) return null;
+        if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            // 403 → M2M app lacks read:users; 404 → sub not found / wrong encoding.
+            console.warn(`[getUserProfile] GET /api/v2/users/${encodedSub} -> ${res.status} ${body}`);
+            return null;
+        }
         return await res.json() as UserProfile;
     } catch {
         return null;

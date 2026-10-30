@@ -1,16 +1,15 @@
 // Builds the two read-only widgets into self-contained ESM bundles.
 //
 // Each web/dist/<name>.js carries BOTH the minified React widget code AND the
-// compiled Tailwind + apps-sdk-ui CSS (injected as a <style> at runtime), so
-// the server only needs to wrap the single file in a <script type="module">.
+// Astryx CSS it imports (reset.css + astryx.css + the stone theme.css/fonts.css),
+// injected as a <style> at runtime. The server only needs to wrap the single
+// file in a <script type="module">.
+//
+// esbuild bundles the `import "...css"` statements in each entry into a sibling
+// <name>.css; we read that, prepend a style-injector snippet to the JS, then
+// delete the sibling so dist stays self-contained.
 
-import { spawnSync } from "node:child_process";
-import {
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,46 +18,14 @@ import * as esbuild from "esbuild";
 const webDir = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(webDir, "src");
 const distDir = join(webDir, "dist");
-const tmpCss = join(distDir, "styles.css");
 
 const ENTRIES = ["explore-product", "get-product-by-id"];
 
 mkdirSync(distDir, { recursive: true });
 
-// 1) Compile the global stylesheet (Tailwind 4 + apps-sdk-ui) to a single CSS
-//    string via @tailwindcss/cli.
-console.log("Compiling CSS with @tailwindcss/cli…");
-const cli = spawnSync(
-  process.execPath,
-  [
-    join(webDir, "..", "node_modules", "@tailwindcss", "cli", "dist", "index.mjs"),
-    "-i",
-    join(srcDir, "styles.css"),
-    "-o",
-    tmpCss,
-    "--minify",
-  ],
-  { stdio: "inherit", cwd: join(webDir, "..") },
-);
-
-if (cli.status !== 0) {
-  console.error("Tailwind CSS build failed.");
-  process.exit(cli.status ?? 1);
-}
-
-const compiledCss = readFileSync(tmpCss, "utf8");
-
-// A tiny self-executing snippet that injects the compiled CSS into <head>.
-// JSON.stringify keeps the CSS string safe to embed inside JS.
-const styleInjector =
-  `(()=>{const c=${JSON.stringify(compiledCss)};` +
-  `const s=document.createElement("style");` +
-  `s.setAttribute("data-payally-widget","");` +
-  `s.textContent=c;document.head.appendChild(s);})();\n`;
-
-// 2) Bundle each widget, then 3) prepend the style injector.
 for (const name of ENTRIES) {
   const outfile = join(distDir, `${name}.js`);
+  const cssSibling = join(distDir, `${name}.css`);
 
   await esbuild.build({
     entryPoints: [join(srcDir, `${name}.tsx`)],
@@ -69,23 +36,39 @@ for (const name of ENTRIES) {
     jsx: "automatic",
     platform: "browser",
     target: "es2020",
-    loader: { ".css": "empty" },
+    // Let esbuild resolve and bundle CSS imports (Astryx reset/astryx/theme).
+    // Font files referenced by the theme CSS are inlined as data URIs so the
+    // bundle needs no external asset fetches inside the host iframe.
+    loader: {
+      ".woff": "dataurl",
+      ".woff2": "dataurl",
+      ".ttf": "dataurl",
+      ".eot": "dataurl",
+      ".svg": "dataurl",
+    },
     define: { "process.env.NODE_ENV": '"production"' },
     logLevel: "info",
   });
 
+  // Inline the esbuild-emitted CSS into the JS bundle via a style injector.
+  let compiledCss = "";
+  if (existsSync(cssSibling)) {
+    compiledCss = readFileSync(cssSibling, "utf8");
+  }
+
+  const styleInjector =
+    `(()=>{const c=${JSON.stringify(compiledCss)};` +
+    `const s=document.createElement("style");` +
+    `s.setAttribute("data-payally-widget","");` +
+    `s.textContent=c;document.head.appendChild(s);})();\n`;
+
   const bundled = readFileSync(outfile, "utf8");
   writeFileSync(outfile, styleInjector + bundled);
 
-  // esbuild may emit a sibling <name>.css when bundled dependencies import CSS.
-  // That CSS is redundant (the full Tailwind + apps-sdk-ui CSS is already
-  // inlined via the style injector), so drop it to keep dist self-contained.
-  rmSync(join(distDir, `${name}.css`), { force: true });
+  // Drop the sibling CSS — it is now inlined into the JS bundle.
+  rmSync(cssSibling, { force: true });
 
   console.log(`Built ${name} -> ${outfile}`);
 }
-
-// Remove the intermediate CSS file; it is now inlined into both bundles.
-rmSync(tmpCss, { force: true });
 
 console.log("UI build complete.");

@@ -15,7 +15,11 @@ const WIDGET_URI = 'ui://widget/explore-product.html';
  * merchant id is env-only (the `merchantIdFallback` arg) and is never exposed
  * as an argument nor read from auth info.
  */
-export function registerExploreProduct(server: McpServer, merchantIdFallback: string) {
+export function registerExploreProduct(
+  server: McpServer,
+  merchantIdFallback: string,
+  productStore?: import('../product-store.js').ProductStore,
+) {
   registerAppResource(
     server,
     'explore-product-widget',
@@ -83,6 +87,11 @@ export function registerExploreProduct(server: McpServer, merchantIdFallback: st
         minPrice: min_price,
         maxPrice: max_price,
       });
+
+      // Cache authoritative prices keyed merchantId:productId so the cart tools
+      // can build trusted line items instead of trusting model-supplied data.
+      // Best-effort (fire-and-forget); never blocks or breaks the search.
+      void productStore?.cacheProducts(products, merchantId);
 
       // MODEL-facing view (goes into the `content` text channel, which Claude
       // surfaces to the model). Compact: id/title/price/seller/category with

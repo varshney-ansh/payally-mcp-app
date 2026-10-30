@@ -1,75 +1,29 @@
-@import 'tailwindcss';
-@import '@openai/apps-sdk-ui/css';
-@source '../../node_modules/@openai/apps-sdk-ui';
-
 /*
- * mishmash® design tokens — a paper-boutique aesthetic.
+ * Widget global styles — Astryx design system.
  *
- * Achromatic chrome (near-black ink, white paper, grey hairlines), FLAT
- * (no shadows, no gradients — depth comes from surface contrast + 1px
- * hairline borders). Product photography is the only color. Light theme.
+ * Astryx base styles (reset + astryx.css) come in via the JS entry so esbuild
+ * bundles them; this file only carries the widget-root resets that keep the
+ * embedded widget transparent and edge-to-edge inside the host iframe.
  *
- * Amber (#f9cb86) and buttercream (#f4debb) are PUNCTUATION ONLY — pills,
- * selected states, soft accent surfaces — never button fills, never body
- * text, never large background bands.
- *
- * Tailwind v4 @theme turns each token into utilities:
- *   --color-ink      → bg-ink / text-ink / border-ink
- *   --font-circular  → font-circular
- *   --radius-card    → rounded-card
- *   --text-body      → text-body (with its paired line-height)
+ * The stone theme's own CSS (theme.css + fonts.css) is imported by
+ * ./astryx-themes.ts and applied through the <Theme> provider.
  */
-@theme {
-  /* Achromatic scale */
-  --color-ink: #171717; /* primary text, borders, button text */
-  --color-paper-white: #ffffff; /* canvas, card surface */
-  --color-bone: #f2f2f2; /* subtle borders, secondary surface, skeleton base */
-  --color-ash: #e3e3e3; /* button/card borders, hairline rules */
-  --color-smoke: #c7c7c7; /* disabled borders */
-  --color-graphite: #a1a1a1; /* secondary text, strikethrough original price */
-  --color-iron: #858585; /* captions, helper / muted text */
-
-  /* Accents — punctuation only */
-  --color-buttercream: #f4debb; /* soft accent surface only — never a button fill */
-  --color-amber-tag: #f9cb86; /* discount / badge pills + selected states only */
-
-  /* Base font — offline-safe system fallback, no webfont/network import */
-  --font-circular: 'Circular', ui-sans-serif, system-ui, -apple-system,
-    'Segoe UI', Roboto, sans-serif;
-
-  /* Type scale (size / line-height) */
-  --text-caption: 10px;
-  --text-caption--line-height: 1.2;
-  --text-body-sm: 14px;
-  --text-body-sm--line-height: 1.2;
-  --text-body: 16px;
-  --text-body--line-height: 1.2;
-  --text-subheading: 18px;
-  --text-subheading--line-height: 1.2;
-  --text-heading-sm: 20px;
-  --text-heading-sm--line-height: 1.2;
-  --text-heading: 30px;
-  --text-heading--line-height: 1.12;
-  --text-heading-lg: 38px;
-  --text-heading-lg--line-height: 1.12;
-
-  /* Radius — only three allowed: cards/buttons/images, inputs/nav, pills */
-  --radius-card: 12px;
-  --radius-input: 4px;
-  --radius-pill: 9999px;
-}
 
 html,
 body {
   margin: 0;
   padding: 0;
   background: transparent;
-  font-family: var(--font-circular);
-  color: var(--color-ink);
 }
 
 *,
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+/* Images fill their Astryx AspectRatio / container slots cleanly. */
+img {
+  display: block;
+  max-width: 100%;
 }
