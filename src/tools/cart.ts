@@ -5,7 +5,9 @@ import type { ProductStore } from '../product-store.js';
 import type { Cart } from '../payally-types/cart.js';
 import type { Auth } from '../types.js';
 import { getUserProfile, extractEmail } from '../utils.js';
+import { createCheckout, type CheckoutItem } from '../payally-api.js';
 import { CartAddItemSchema, CartItemUpdateSchema, ITEM_CATEGORIES } from '../payally-types/cart.js';
+import type { CartLineItem } from '../payally-types/cart.js';
 
 /**
  * Cart tools — plain (non-UI) MCP tools that mutate a Valkey-backed cart and
@@ -29,6 +31,8 @@ export interface CartAuthConfig {
   domain: string;
   mgmtClientId: string;
   mgmtClientSecret: string;
+  /** Canonical tenant Management API audience (custom-domain audience → 403). */
+  mgmtAudience?: string;
 }
 
 /**
@@ -46,7 +50,13 @@ async function requireUserEmail(ctx: unknown, auth: CartAuthConfig): Promise<str
     throw new Error('No authenticated user on the request. Sign in to use the cart.');
   }
 
-  const profile = await getUserProfile(sub, auth.domain, auth.mgmtClientId, auth.mgmtClientSecret);
+  const profile = await getUserProfile(
+    sub,
+    auth.domain,
+    auth.mgmtClientId,
+    auth.mgmtClientSecret,
+    auth.mgmtAudience,
+  );
   const email = extractEmail(profile);
   if (!email) {
     // Last-resort fallback: key the cart on the stable `sub` when the profile
@@ -82,6 +92,20 @@ function cartView(cart: Cart) {
     items: cart.items,
     updatedAt: cart.updatedAt,
   };
+}
+
+/**
+ * Maps a STORED cart line item to the PayPal-shaped checkout item, stripping
+ * the internal cart fields (lineId, productId, variantId) that are not part of
+ * the PayPal item schema. Items come from the cached cart — built from trusted
+ * catalog data — so nothing here is model-supplied.
+ */
+function toCheckoutItem(line: CartLineItem): CheckoutItem {
+  const { lineId, productId, variantId, ...paypalItem } = line;
+  void lineId;
+  void productId;
+  void variantId;
+  return paypalItem as CheckoutItem;
 }
 
 function ok(payload: Record<string, unknown>) {
@@ -261,6 +285,60 @@ export function registerCartTools(
         return ok({ status: 'discarded', cartId: discarded });
       } catch (err) {
         return fail(err instanceof Error ? err.message : 'Failed to discard the cart.');
+      }
+    },
+  );
+
+  // 5) CHECKOUT -------------------------------------------------------------
+  server.registerTool(
+    'checkout',
+    {
+      title: 'Checkout cart',
+      description:
+        'Check out the buyer\'s cart: sends the cart items to PayAlly to create a checkout. Items (names, prices, etc.) are read from the stored cart on the server — never from the caller — so they cannot be altered. On a successful checkout the cart is automatically discarded. Omit cartId to check out the active cart. Returns the checkout response from PayAlly.',
+      inputSchema: z.object({ cartId: cartIdArg }),
+      annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ cartId }, ctx) => {
+      try {
+        const email = await requireUserEmail(ctx, auth);
+
+        // Read the cart from cache (never create one). Items are server-truth.
+        const cart = await store.readCart(email, merchantIdFallback, cartId);
+        if (!cart) {
+          return fail(cartId ? `Cart "${cartId}" was not found.` : 'No active cart to check out.');
+        }
+        if (cart.items.length === 0) {
+          return fail('The cart is empty.');
+        }
+
+        // Build the checkout body from the STORED items (strip internal fields).
+        const items = cart.items.map(toCheckoutItem);
+        const response = await createCheckout({
+          userEmail: cart.userEmail,
+          merchantId: cart.merchantId,
+          items,
+        });
+
+        // Checkout succeeded (createCheckout throws on a non-2xx). Auto-discard
+        // the cart so the buyer can't accidentally re-pay for the same items.
+        // Best-effort — a cleanup hiccup must not mask a completed payment.
+        try {
+          await store.discardCart(email, merchantIdFallback, cart.cartId);
+        } catch (cleanupErr) {
+          console.warn(`[checkout] cart discard after checkout failed for ${cart.cartId}:`, cleanupErr);
+        }
+
+        // The endpoint's response IS the tool response.
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(response) }],
+          structuredContent:
+            response && typeof response === 'object'
+              ? (response as Record<string, unknown>)
+              : { response },
+        };
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : 'Failed to check out the cart.');
       }
     },
   );

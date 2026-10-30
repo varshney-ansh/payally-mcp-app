@@ -40,3 +40,50 @@ export async function getProductById(productId: string, merchantId: string): Pro
   url.searchParams.set('merchantid', merchantId);
   return getJson<GetProductByIdResponse>(url);
 }
+
+/** A PayPal-shaped order item sent to checkout (no internal cart fields). */
+export interface CheckoutItem {
+  name: string;
+  quantity: string;
+  unit_amount: { currency_code: string; value: string };
+  tax?: { currency_code: string; value: string };
+  sku?: string;
+  url?: string;
+  image_url?: string;
+  category?: string;
+  description?: string;
+  upc?: { type: string; code: string };
+  billing_plan?: Record<string, unknown>;
+}
+
+/**
+ * Creates a checkout for the given buyer + merchant with the cart's items.
+ * POSTs to `v1/checkout` and returns whatever the endpoint responds with
+ * (parsed JSON) — that becomes the tool's response.
+ */
+export async function createCheckout(body: {
+  userEmail: string;
+  merchantId: string;
+  items: CheckoutItem[];
+}): Promise<unknown> {
+  const res = await fetch(`${API_BASE}/checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = text; // non-JSON response — surface the raw text
+  }
+  if (!res.ok) {
+    throw new Error(
+      `PayAlly checkout ${res.status} ${res.statusText}: ${
+        typeof parsed === 'string' ? parsed.slice(0, 500) : JSON.stringify(parsed).slice(0, 500)
+      }`,
+    );
+  }
+  return parsed;
+}

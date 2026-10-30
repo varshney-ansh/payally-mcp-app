@@ -39,6 +39,18 @@ export class CartStore {
     return `${userEmail}:${merchantId}:active-cart`;
   }
 
+  /**
+   * Reads the buyer's cart for READ-ONLY use (e.g. checkout): the explicit
+   * cartId when given, else the active cart. Unlike `resolveActiveCart`, this
+   * NEVER creates a cart — returns null when there is nothing to read.
+   */
+  async readCart(userEmail: string, merchantId: string, cartId?: string): Promise<Cart | null> {
+    if (cartId) return this.getCart(userEmail, merchantId, cartId);
+    const activeId = await this.getActiveCartId(userEmail, merchantId);
+    if (!activeId) return null;
+    return this.getCart(userEmail, merchantId, activeId);
+  }
+
   /** Reads a cart by id, or null if it does not exist. */
   async getCart(userEmail: string, merchantId: string, cartId: string): Promise<Cart | null> {
     const raw = await this.client.get(this.cartKey(userEmail, merchantId, cartId));

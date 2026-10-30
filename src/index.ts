@@ -10,6 +10,8 @@ import { registerGetProductById } from './tools/get-product-by-id.js';
 import { registerCartTools } from './tools/cart.js';
 import { CartStore } from './cart-store.js';
 import { ProductStore } from './product-store.js';
+import { getUserProfile, extractEmail } from './utils.js';
+import type { Auth } from './types.js';
 
 import { ClosingError, GlideClusterClient, Logger, ServiceType } from "@valkey/valkey-glide";
 
@@ -20,6 +22,8 @@ const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN as string;
 const AUDIENCE = (process.env.AUTH0_AUDIENCE ?? MCP_SERVER_URL) as string;
 const MGMT_CLIENT_ID = process.env.AUTH0_MGMT_CLIENT_ID as string;
 const MGMT_CLIENT_SECRET = process.env.AUTH0_MGMT_CLIENT_SECRET as string;
+// Canonical tenant Management API audience (custom-domain audience → 403).
+const MGMT_AUDIENCE = process.env.AUTH0_MGMT_AUDIENCE as string | undefined;
 const PAYPAL_MERCHANT_ID = process.env.PAYPAL_MERCHANT_ID as string;
 const ELASTIC_URL = process.env.ELASTIC_URL as string;
 
@@ -109,6 +113,56 @@ app.post('/mcp', requireAuth, async (req: Request, res: Response) => {
         registerExploreProduct(mcpServer, PAYPAL_MERCHANT_ID, productStore ?? undefined);
         registerGetProductById(mcpServer, PAYPAL_MERCHANT_ID, productStore ?? undefined);
 
+        // Reports the currently signed-in user so an AI agent can answer
+        // "who am I logged in as?". Returns only safe profile fields — never the
+        // raw access token or Management API internals. Identity (email, name,
+        // picture) comes from the Auth0 profile looked up by `sub`.
+        mcpServer.registerTool(
+            'whoami',
+            {
+                title: 'Who am I',
+                description:
+                    'Return the currently signed-in PayAlly user: their name, email and profile picture. Use this to tell the user which account they are logged in as.',
+                annotations: { readOnlyHint: true, openWorldHint: false },
+            },
+            async (ctx) => {
+                const authInfo = ctx.http?.authInfo as Auth | undefined;
+
+                if (!authInfo?.extra?.sub) {
+                    return {
+                        content: [
+                            {
+                                type: 'text' as const,
+                                text: JSON.stringify({ signedIn: false, message: 'No user is signed in.' }),
+                            },
+                        ],
+                    };
+                }
+
+                const profile = await getUserProfile(
+                    authInfo.extra.sub,
+                    AUTH0_DOMAIN,
+                    MGMT_CLIENT_ID,
+                    MGMT_CLIENT_SECRET,
+                    MGMT_AUDIENCE,
+                );
+
+                const user = {
+                    signedIn: true,
+                    userId: authInfo.extra.sub,
+                    name: profile?.name ?? authInfo.extra.name,
+                    email: extractEmail(profile) ?? authInfo.extra.email,
+                    picture: profile?.picture ?? authInfo.extra.picture,
+                    merchantId: authInfo.extra.paypal_merchant_id ?? PAYPAL_MERCHANT_ID,
+                };
+
+                return {
+                    content: [{ type: 'text' as const, text: JSON.stringify(user) }],
+                    structuredContent: user,
+                };
+            }
+        );
+
         // Cart tools require the Valkey cache (cart + product-details stores);
         // only register when connected.
         if (cartStore && productStore) {
@@ -116,6 +170,7 @@ app.post('/mcp', requireAuth, async (req: Request, res: Response) => {
                 domain: AUTH0_DOMAIN,
                 mgmtClientId: MGMT_CLIENT_ID,
                 mgmtClientSecret: MGMT_CLIENT_SECRET,
+                mgmtAudience: MGMT_AUDIENCE,
             });
         } else {
             console.warn('Valkey client unavailable — cart tools not registered.');

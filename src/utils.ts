@@ -36,11 +36,23 @@ let mgmtTokenCache: { token: string; expiresAt: number } | null = null;
  * Fetches a short-lived Management API token using client credentials.
  * Caches the result until 60 seconds before expiry.
  */
-export async function getManagementToken(domain: string, clientId: string, clientSecret: string): Promise<string> {
+export async function getManagementToken(
+    domain: string,
+    clientId: string,
+    clientSecret: string,
+    audience?: string,
+): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
     if (mgmtTokenCache && mgmtTokenCache.expiresAt > now + 60) {
         return mgmtTokenCache.token;
     }
+
+    // The token is minted on `domain` (the custom domain — so iss matches the
+    // custom domain used for the /api/v2 call), but the AUDIENCE must be the
+    // CANONICAL tenant Management API identifier. A custom-domain audience is
+    // rejected with 403 "Service not enabled". Falls back to the domain-derived
+    // audience when AUTH0_MGMT_AUDIENCE is not configured.
+    const mgmtAudience = audience && audience.length > 0 ? audience : `https://${domain}/api/v2/`;
 
     const res = await fetch(`https://${domain}/oauth/token`, {
         method: 'POST',
@@ -49,7 +61,7 @@ export async function getManagementToken(domain: string, clientId: string, clien
             grant_type: 'client_credentials',
             client_id: clientId,
             client_secret: clientSecret,
-            audience: `https://${domain}/api/v2/`,
+            audience: mgmtAudience,
         }),
     });
 
@@ -72,13 +84,14 @@ export async function getUserProfile(
     domain: string,
     clientId: string,
     clientSecret: string,
+    audience?: string,
 ): Promise<UserProfile | null> {
     if (!clientId || !clientSecret) {
         console.warn('[getUserProfile] Missing Management API credentials.');
         return null;
     }
     try {
-        const mgmtToken = await getManagementToken(domain, clientId, clientSecret);
+        const mgmtToken = await getManagementToken(domain, clientId, clientSecret, audience);
         const encodedSub = encodeURIComponent(sub);
         const res = await fetch(`https://${domain}/api/v2/users/${encodedSub}`, {
             headers: { Authorization: `Bearer ${mgmtToken}` },
