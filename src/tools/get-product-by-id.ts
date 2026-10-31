@@ -5,6 +5,7 @@ import { getProductById } from '../payally-api.js';
 import { ProductSchema } from '../payally-types/schema.js';
 import { toUploadcareImage, uploadcareCdnOrigin } from '../uploadcare.js';
 import { readWidgetHtml } from './widget-html.js';
+import { brand } from '../brand.js';
 
 const WIDGET_URI = 'ui://widget/get-product-by-id.html';
 
@@ -24,7 +25,7 @@ export function registerGetProductById(
     server,
     'get-product-by-id-widget',
     WIDGET_URI,
-    { description: 'A single PayAlly product card with image, price and details.' },
+    { description: `A single ${brand.name} product card with image, price and details.` },
     async () => ({
       contents: [
         {
@@ -61,10 +62,10 @@ export function registerGetProductById(
     server,
     'getproductbyid',
     {
-      title: 'Get product by id',
-      description: 'Look up a single PayAlly product by its id and show it as a compact inline card.',
+      title: `Get ${brand.name} product details`,
+      description: `Get full details for one ${brand.name} product (description, all images, variants, rating) as an inline card. Use when the user picks a product or asks to "see"/"tell me about" a specific one. Use a product id from a search — do not invent ids.`,
       inputSchema: z.object({
-        productId: z.string().min(1).describe('The PayAlly product id to look up.'),
+        productId: z.string().min(1).describe(`The ${brand.name} product id (from a search result) to look up.`),
       }),
       outputSchema: ProductSchema,
       annotations: { readOnlyHint: true, openWorldHint: true },

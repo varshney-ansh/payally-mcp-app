@@ -4,6 +4,7 @@ import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from '@model
 import { listOrders, getOrderById } from '../payally-api.js';
 import { resolveUserEmail, type AuthConfig } from './auth.js';
 import { readWidgetHtml } from './widget-html.js';
+import { brand, storePhrase } from '../brand.js';
 
 /**
  * Order-history tools — MCP Apps tools with inline Astryx widgets that show the
@@ -18,6 +19,33 @@ import { readWidgetHtml } from './widget-html.js';
 
 const LIST_WIDGET_URI = 'ui://widget/list-orders.html';
 const DETAIL_WIDGET_URI = 'ui://widget/order-detail.html';
+
+/**
+ * Strips the brand's PayPal merchant id from an order object so it is never
+ * exposed to the agent/customer. The user's own email fields are kept (they
+ * know their own email). Returns a shallow copy; safe on any shape.
+ */
+function scrubOrder(order: unknown): unknown {
+  if (order && typeof order === 'object' && !Array.isArray(order)) {
+    const { paypalMerchantId: _omit, ...rest } = order as Record<string, unknown>;
+    return rest;
+  }
+  return order;
+}
+
+/** Applies scrubOrder to each order in an order-history / order-detail response. */
+function scrubOrderResponse(response: unknown): unknown {
+  if (response && typeof response === 'object') {
+    const r = response as Record<string, unknown>;
+    if (Array.isArray(r.orders)) {
+      return { ...r, orders: r.orders.map(scrubOrder) };
+    }
+    if (r.order && typeof r.order === 'object') {
+      return { ...r, order: scrubOrder(r.order) };
+    }
+  }
+  return scrubOrder(response);
+}
 
 function fail(message: string) {
   return {
@@ -44,7 +72,7 @@ export function registerOrderTools(server: McpServer, merchantIdFallback: string
     server,
     'list-orders-widget',
     LIST_WIDGET_URI,
-    { description: 'A list of the buyer\'s past orders with status and totals.' },
+    { description: `A list of the buyer's past ${brand.name} orders with status and totals.` },
     async () => ({
       contents: [
         {
@@ -79,9 +107,9 @@ export function registerOrderTools(server: McpServer, merchantIdFallback: string
     server,
     'list-my-orders',
     {
-      title: 'List my orders',
+      title: 'Show my orders',
       description:
-        "List the orders the signed-in user has placed with this store, shown as an inline list with status and totals. Use this to show the user their order history. Takes no arguments — the buyer is the authenticated user.",
+        `Show the orders the signed-in user has placed with ${storePhrase(brand)} — date, status and total for each. Use when the user asks about their order history or recent purchases. The buyer is always the signed-in user; takes no arguments.`,
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: true },
       _meta: {
@@ -94,7 +122,7 @@ export function registerOrderTools(server: McpServer, merchantIdFallback: string
       try {
         const email = await resolveUserEmail(ctx, auth);
         const response = await listOrders({ merchantId: merchantIdFallback, email });
-        return ok(response);
+        return ok(scrubOrderResponse(response));
       } catch (err) {
         return fail(err instanceof Error ? err.message : 'Failed to list orders.');
       }
@@ -106,11 +134,11 @@ export function registerOrderTools(server: McpServer, merchantIdFallback: string
     server,
     'get-order-details',
     {
-      title: 'Get order details',
+      title: 'Show order details',
       description:
-        "Show the full details of one of the signed-in user's orders, looked up by its order id, as an inline order card with line items and totals. Use this when the user asks about a specific order.",
+        `Show one of the signed-in user's ${brand.name} orders in full — items, quantities, prices and totals — from its order id. Use when the user asks about a specific order. Get the order id from the order-history tool.`,
       inputSchema: z.object({
-        orderId: z.string().min(1).describe('The id of the order to look up.'),
+        orderId: z.string().min(1).describe('The order id (from the order-history list) to look up.'),
       }),
       annotations: { readOnlyHint: true, openWorldHint: true },
       _meta: {
@@ -123,7 +151,7 @@ export function registerOrderTools(server: McpServer, merchantIdFallback: string
       try {
         const email = await resolveUserEmail(ctx, auth);
         const response = await getOrderById({ merchantId: merchantIdFallback, email, orderId });
-        return ok(response);
+        return ok(scrubOrderResponse(response));
       } catch (err) {
         return fail(err instanceof Error ? err.message : 'Failed to get order details.');
       }

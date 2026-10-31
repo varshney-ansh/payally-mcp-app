@@ -5,6 +5,7 @@ import { exploreProducts } from '../payally-api.js';
 import { ProductSchema } from '../payally-types/schema.js';
 import { toUploadcareImage, uploadcareCdnOrigin } from '../uploadcare.js';
 import { readWidgetHtml } from './widget-html.js';
+import { brand, sellsNoun } from '../brand.js';
 
 const WIDGET_URI = 'ui://widget/explore-product.html';
 
@@ -24,7 +25,7 @@ export function registerExploreProduct(
     server,
     'explore-product-widget',
     WIDGET_URI,
-    { description: 'A horizontally scrollable carousel of PayAlly products matching the search query.' },
+    { description: `A horizontally scrollable carousel of ${brand.name} products matching the search query.` },
     async () => ({
       contents: [
         {
@@ -61,13 +62,13 @@ export function registerExploreProduct(
     server,
     'explore-product',
     {
-      title: 'Explore products',
+      title: `Search ${brand.name} products`,
       description:
-        'Search the PayAlly catalog and show matching products in an interactive, horizontally scrollable carousel.',
+        `Search the ${brand.name} catalog for ${sellsNoun(brand)}. Use when the user wants to browse or find products by keyword. Returns matching products (id, title, price, image) as an inline carousel — use the product id with other tools (get details, add to cart).`,
       inputSchema: z.object({
-        query: z.string().min(1).describe('What the customer is shopping for.'),
-        min_price: z.number().optional().describe('Minimum product price filter.'),
-        max_price: z.number().optional().describe('Maximum product price filter.'),
+        query: z.string().min(1).describe('Free-text search: what the user is shopping for, e.g. "running shoes" or "white sneakers".'),
+        min_price: z.number().optional().describe('Optional minimum price (number). Omit for no lower bound.'),
+        max_price: z.number().optional().describe('Optional maximum price (number). Omit for no upper bound.'),
       }),
       outputSchema: z.object({
         query: z.string(),

@@ -7,6 +7,7 @@ import { resolveUserEmail, type AuthConfig } from './auth.js';
 import { createCheckout, type CheckoutItem } from '../payally-api.js';
 import { CartAddItemSchema, CartItemUpdateSchema, ITEM_CATEGORIES } from '../payally-types/cart.js';
 import type { CartLineItem } from '../payally-types/cart.js';
+import { brand } from '../brand.js';
 
 /**
  * Cart tools — plain (non-UI) MCP tools that mutate a Valkey-backed cart and
@@ -40,7 +41,8 @@ async function requireUserEmail(ctx: unknown, auth: CartAuthConfig): Promise<str
   return resolveUserEmail(ctx, auth, { allowSubFallback: true });
 }
 
-/** Compact, model-friendly view of a cart returned in the `content` channel. */
+/** Compact, model-friendly view of a cart returned in the `content` channel.
+ *  NEVER includes the merchant/PayPal id — that is server-side only. */
 function cartView(cart: Cart) {
   const itemTotals = cart.items.reduce(
     (acc, i) => {
@@ -55,7 +57,6 @@ function cartView(cart: Cart) {
 
   return {
     cartId: cart.cartId,
-    merchantId: cart.merchantId,
     itemCount: cart.items.length,
     totalUnits: itemTotals.units,
     estimatedItemTotal: cart.items.length
@@ -95,6 +96,19 @@ function fail(message: string) {
 }
 
 /**
+ * Strips the brand's PayPal merchant id from a checkout response so it is never
+ * exposed to the agent/customer (user email fields are kept — the user knows
+ * their own email). Safe on any shape.
+ */
+function scrubCheckoutResponse(response: unknown): unknown {
+  if (response && typeof response === 'object' && !Array.isArray(response)) {
+    const { paypalMerchantId: _omit, ...rest } = response as Record<string, unknown>;
+    return rest;
+  }
+  return response;
+}
+
+/**
  * Registers the four cart tools on the MCP server.
  *
  * @param server            the per-request McpServer
@@ -126,11 +140,11 @@ export function registerCartTools(
   server.registerTool(
     'cart-add-items',
     {
-      title: 'Add items to cart',
+      title: 'Add to cart',
       description:
-        'Add one or more products to the active cart by productId (and optional variantId) and quantity. Prices, names and all other line-item details are taken from the authoritative PayAlly catalog on the server — never from the caller — so they cannot be altered. Adding a product already in the cart sums the quantity.',
+        `Add ${brand.name} products to the shopping cart. Use when the user wants to buy or save an item. Provide the product id (from a search/details result) and quantity — price, name and every other detail are resolved server-side from the ${brand.name} catalog and CANNOT be changed by the caller. Adding the same product again increases its quantity.`,
       inputSchema: z.object({
-        items: z.array(CartAddItemSchema).min(1).describe('The products to add (by productId + quantity).'),
+        items: z.array(CartAddItemSchema).min(1).describe('The products to add. Each needs a productId; quantity defaults to 1.'),
         cartId: cartIdArg,
       }),
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: false },
@@ -170,14 +184,14 @@ export function registerCartTools(
   server.registerTool(
     'cart-update-items',
     {
-      title: 'Update cart item quantity',
+      title: 'Change cart item quantity',
       description:
-        'Change the quantity of an existing cart line item, targeted by its lineId. Only quantity can be changed — price, name and other line-item details are owned by the server and cannot be altered.',
+        'Set a new quantity for an item already in the cart, using its lineId from the cart. Use when the user asks for more or fewer of an item. ONLY the quantity can change here — to change the product itself, remove it and add the right one.',
       inputSchema: z.object({
         updates: z
           .array(CartItemUpdateSchema)
           .min(1)
-          .describe('The line-item updates. Each must include the lineId plus the fields to change.'),
+          .describe('One entry per item to change: its lineId and the new quantity.'),
         cartId: cartIdArg,
       }),
       annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
@@ -204,16 +218,16 @@ export function registerCartTools(
     {
       title: 'Remove cart items',
       description:
-        'Delete specific line items from the cart by lineId, or clear every item. Provide `lineIds` to remove specific items, or set `clearAll` to true to empty the cart (the cart itself is kept — use cart-discard to delete it entirely).',
+        'Remove one or more items from the cart by lineId, or empty the whole cart. Use when the user wants something taken out. To change quantity instead, use the quantity tool; to delete the cart entirely, use cart-discard.',
       inputSchema: z.object({
         lineIds: z
           .array(z.string().min(1))
           .optional()
-          .describe('The lineIds of items to remove. Ignored when clearAll is true.'),
+          .describe('The lineIds of the items to remove (from the cart). Ignored when clearAll is true.'),
         clearAll: z
           .boolean()
           .optional()
-          .describe('When true, removes all items from the cart.'),
+          .describe('Set true to remove EVERY item (empties the cart but keeps the cart).'),
         cartId: cartIdArg,
       }),
       annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
@@ -241,9 +255,9 @@ export function registerCartTools(
   server.registerTool(
     'cart-discard',
     {
-      title: 'Discard cart',
+      title: 'Empty the cart',
       description:
-        'Discard (delete) the whole cart and its active-cart pointer. Omit cartId to discard the buyer\'s active cart.',
+        'Delete the whole cart entirely. Use when the user wants to start over or abandon the purchase. To remove just some items, use the remove tool instead. Omit cartId to empty the active cart.',
       inputSchema: z.object({ cartId: cartIdArg }),
       annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: true, openWorldHint: false },
     },
@@ -265,9 +279,9 @@ export function registerCartTools(
   server.registerTool(
     'checkout',
     {
-      title: 'Checkout cart',
+      title: 'Checkout',
       description:
-        'Check out the buyer\'s cart: sends the cart items to PayAlly to create a checkout. Items (names, prices, etc.) are read from the stored cart on the server — never from the caller — so they cannot be altered. On a successful checkout the cart is automatically discarded. Omit cartId to check out the active cart. Returns the checkout response from PayAlly.',
+        `Pay for the current cart. Use ONLY when the user confirms they are ready to pay. Reads the cart's items server-side (prices/details cannot be altered by the caller), charges the buyer, and empties the cart on success. Omit cartId to check out the active cart. Returns the order confirmation.`,
       inputSchema: z.object({ cartId: cartIdArg }),
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -301,13 +315,14 @@ export function registerCartTools(
           console.warn(`[checkout] cart discard after checkout failed for ${cart.cartId}:`, cleanupErr);
         }
 
-        // The endpoint's response IS the tool response.
+        // The endpoint's response IS the tool response (merchant id scrubbed).
+        const result = scrubCheckoutResponse(response);
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(response) }],
+          content: [{ type: 'text' as const, text: JSON.stringify(result) }],
           structuredContent:
-            response && typeof response === 'object'
-              ? (response as Record<string, unknown>)
-              : { response },
+            result && typeof result === 'object'
+              ? (result as Record<string, unknown>)
+              : { response: result },
         };
       } catch (err) {
         return fail(err instanceof Error ? err.message : 'Failed to check out the cart.');

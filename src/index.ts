@@ -13,12 +13,14 @@ import { CartStore } from './cart-store.js';
 import { ProductStore } from './product-store.js';
 import { getUserProfile, extractEmail } from './utils.js';
 import type { Auth } from './types.js';
+import { brand } from './brand.js';
 
 import { ClosingError, GlideClusterClient, Logger, ServiceType } from "@valkey/valkey-glide";
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const MCP_SERVER_URL = process.env.MCP_SERVER_URL ?? `http://localhost:${PORT}`;
-const MCP_SERVER_RESOURCE_NAME = 'PayAlly';
+// The MCP server presents itself as the BRAND, not PayAlly.
+const MCP_SERVER_RESOURCE_NAME = brand.name;
 const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN as string;
 const AUDIENCE = (process.env.AUTH0_AUDIENCE ?? MCP_SERVER_URL) as string;
 const MGMT_CLIENT_ID = process.env.AUTH0_MGMT_CLIENT_ID as string;
@@ -123,7 +125,7 @@ app.post('/mcp', requireAuth, async (req: Request, res: Response) => {
             {
                 title: 'Who am I',
                 description:
-                    'Return the currently signed-in PayAlly user: their name, email and profile picture. Use this to tell the user which account they are logged in as.',
+                    `Show which ${brand.name} account is signed in (name, email, picture). Use when the user asks who they're logged in as, or to confirm the signed-in account.`,
                 annotations: { readOnlyHint: true, openWorldHint: false },
             },
             async (ctx) => {
@@ -148,13 +150,14 @@ app.post('/mcp', requireAuth, async (req: Request, res: Response) => {
                     MGMT_AUDIENCE,
                 );
 
+                // NEVER expose the merchant/PayPal id or raw token — brand-safe
+                // user identity only.
                 const user = {
                     signedIn: true,
                     userId: authInfo.extra.sub,
                     name: profile?.name ?? authInfo.extra.name,
                     email: extractEmail(profile) ?? authInfo.extra.email,
                     picture: profile?.picture ?? authInfo.extra.picture,
-                    merchantId: authInfo.extra.paypal_merchant_id ?? PAYPAL_MERCHANT_ID,
                 };
 
                 return {
