@@ -29,6 +29,7 @@ const MGMT_CLIENT_SECRET = process.env.AUTH0_MGMT_CLIENT_SECRET as string;
 const MGMT_AUDIENCE = process.env.AUTH0_MGMT_AUDIENCE as string | undefined;
 const PAYPAL_MERCHANT_ID = process.env.PAYPAL_MERCHANT_ID as string;
 const ELASTIC_URL = process.env.ELASTIC_URL as string;
+const ELASTIC_CACHE_CLUSTER_NAME = process.env.ELASTIC_CACHE_CLUSTER_NAME as string;
 
 let client: GlideClusterClient | null = null;
 let cartStore: CartStore | null = null;
@@ -53,7 +54,7 @@ try {
         credentials: {
             username: "ecs-cache-user",
             iamConfig: {
-                clusterName: "payally-cachedb",
+                clusterName: ELASTIC_CACHE_CLUSTER_NAME,
                 service: ServiceType.Elasticache,
                 region: "eu-west-1",
             }

@@ -2,6 +2,11 @@ import type { ExploreProductsResponse, GetProductByIdResponse } from './payally-
 
 const API_BASE = process.env.PAYALLY_API_BASE ?? 'https://api.payally.world/v1';
 
+// API key for the PayAlly AWS API Gateway, sent as the `x-api-key` header on
+// every request. Set via the `PAYALLY-X-APIKEY` env var (hyphenated key → read
+// with bracket notation). Server-side only; never exposed to tools/clients.
+const API_KEY = process.env['PAYALLY-X-APIKEY'];
+
 /**
  * Thin client for the PayAlly storefront API.
  *
@@ -10,8 +15,17 @@ const API_BASE = process.env.PAYALLY_API_BASE ?? 'https://api.payally.world/v1';
  * tool argument, so it stays out of the model's and the client's reach.
  */
 
+/** Base headers for every PayAlly API call, including the API Gateway key. */
+function apiHeaders(extra?: Record<string, string>): Record<string, string> {
+  return {
+    Accept: 'application/json',
+    ...(API_KEY ? { 'x-api-key': API_KEY } : {}),
+    ...extra,
+  };
+}
+
 async function getJson<T>(url: URL): Promise<T> {
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  const res = await fetch(url, { headers: apiHeaders() });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`PayAlly API ${res.status} ${res.statusText} for ${url.pathname}: ${body.slice(0, 500)}`);
@@ -64,7 +78,7 @@ export interface CheckoutItem {
 async function postJson(path: string, body: unknown, label: string): Promise<unknown> {
   const res = await fetch(`${API_BASE}/${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: apiHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
   const text = await res.text();
