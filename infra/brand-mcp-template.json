@@ -1,0 +1,841 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "brand-mcp Fargate service — parameterized for multi-brand deployment via Lambda",
+  "Parameters": {
+    "Subdomain": {
+      "Type": "String",
+      "Description": "Subdomain prefix e.g. nike-store → nike-store.mcp.payally.world"
+    },
+    "ServiceId": {
+      "Type": "String",
+      "Description": "Short unique 4-char suffix for resource names e.g. bf85"
+    },
+    "ListenerRulePriority": {
+      "Type": "Number",
+      "Description": "ALB listener rule priority — must be unique per listener (1-50000). Priority 44990 is taken by nike-store."
+    },
+    "BrandName": {
+      "Type": "String",
+      "Description": "Brand display name e.g. Nike"
+    },
+    "BrandStoreNoun": {
+      "Type": "String",
+      "Default": "store",
+      "Description": "e.g. store, boutique, shop"
+    },
+    "BrandVoice": {
+      "Type": "String",
+      "Description": "Brand tone/persona e.g. Athletic, performance-driven, premium."
+    },
+    "BrandProductNouns": {
+      "Type": "String",
+      "Description": "Comma-separated product types e.g. sneakers, running shoes"
+    },
+    "BrandCategoryHints": {
+      "Type": "String",
+      "Description": "Comma-separated category hints e.g. Athletic Shoes, Running"
+    },
+    "PaypalMerchantId": {
+      "Type": "String",
+      "Description": "PayPal merchant ID for this brand"
+    },
+    "Auth0ClientId": {
+      "Type": "String",
+      "Description": "Auth0 management API client ID"
+    },
+    "Auth0ClientSecret": {
+      "Type": "String",
+      "NoEcho": true,
+      "Description": "Auth0 management API client secret — stored as NoEcho"
+    },
+    "ImageUri": {
+      "Type": "String",
+      "Default": "398092290536.dkr.ecr.eu-west-1.amazonaws.com/payally/brand-mcp:latest",
+      "Description": "ECR image URI"
+    },
+    "ContainerPort": {
+      "Type": "Number",
+      "Default": 3001
+    },
+    "TaskCpu": {
+      "Type": "String",
+      "Default": "512",
+      "AllowedValues": [
+        "256",
+        "512",
+        "1024",
+        "2048",
+        "4096"
+      ]
+    },
+    "TaskMemory": {
+      "Type": "String",
+      "Default": "1024"
+    },
+    "DesiredCount": {
+      "Type": "Number",
+      "Default": 1
+    },
+    "CreateElastiCache": {
+      "Type": "String",
+      "Default": "true",
+      "AllowedValues": [
+        "true",
+        "false"
+      ],
+      "Description": "Set false to reuse existing payally-cachedb cluster"
+    },
+    "ExistingElastiCacheEndpoint": {
+      "Type": "String",
+      "Default": "clustercfg.payally-cachedb.mhtshn.euw1.cache.amazonaws.com",
+      "Description": "Used only when CreateElastiCache=false"
+    },
+    "ElastiCacheNodeType": {
+      "Type": "String",
+      "Default": "cache.t4g.micro"
+    },
+    "HostedZoneId": {
+      "Type": "String",
+      "Description": "Route 53 hosted zone ID for payally.world"
+    },
+    "AlbSecurityGroupId": {
+      "Type": "AWS::EC2::SecurityGroup::Id",
+      "Default": "sg-0525d5a0c13bab445",
+      "Description": "Shared ALB security group ID"
+    },
+    "PayallyApiKey": {
+      "Type": "String",
+      "NoEcho": true,
+      "Description": "API Gateway API key VALUE for this brand. Minted by the deploy-brand Lambda in eu-north-1 and attached to usage plan uuepjj, then passed in here and injected into the container as PAYALLY-X-APIKEY."
+    }
+  },
+  "Conditions": {
+    "ShouldCreateElastiCache": {
+      "Fn::Equals": [
+        {
+          "Ref": "CreateElastiCache"
+        },
+        "true"
+      ]
+    }
+  },
+  "Resources": {
+    "EcsTaskSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": {
+          "Fn::Sub": "Security group for ECS service: brand-mcp-${ServiceId}"
+        },
+        "VpcId": "vpc-089c56c8fd1aaa8d1",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": {
+              "Ref": "ContainerPort"
+            },
+            "ToPort": {
+              "Ref": "ContainerPort"
+            },
+            "SourceSecurityGroupId": {
+              "Ref": "AlbSecurityGroupId"
+            },
+            "Description": "Allow traffic from ALB only"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "AmazonECSManaged",
+            "Value": "true"
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "brand-mcp-${ServiceId}-ecs-sg"
+            }
+          }
+        ]
+      }
+    },
+    "AlbEgressToEcsRule": {
+      "Type": "AWS::EC2::SecurityGroupEgress",
+      "Properties": {
+        "GroupId": {
+          "Ref": "AlbSecurityGroupId"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": {
+          "Ref": "ContainerPort"
+        },
+        "ToPort": {
+          "Ref": "ContainerPort"
+        },
+        "DestinationSecurityGroupId": {
+          "Ref": "EcsTaskSecurityGroup"
+        },
+        "Description": {
+          "Fn::Sub": "Egress Rule to ECS Service brand-mcp-${ServiceId}"
+        }
+      }
+    },
+    "ElastiCacheSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Condition": "ShouldCreateElastiCache",
+      "Properties": {
+        "GroupDescription": {
+          "Fn::Sub": "ElastiCache SG for brand-mcp-${ServiceId}"
+        },
+        "VpcId": "vpc-089c56c8fd1aaa8d1",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 6379,
+            "ToPort": 6379,
+            "SourceSecurityGroupId": {
+              "Ref": "EcsTaskSecurityGroup"
+            },
+            "Description": "Allow Valkey from ECS tasks only"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "127.0.0.1/32"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "brand-mcp-${ServiceId}-cache-sg"
+            }
+          }
+        ]
+      }
+    },
+    "CacheSubnetGroup": {
+      "Type": "AWS::ElastiCache::SubnetGroup",
+      "Condition": "ShouldCreateElastiCache",
+      "Properties": {
+        "Description": {
+          "Fn::Sub": "Subnet group for brand-mcp-${ServiceId}"
+        },
+        "CacheSubnetGroupName": {
+          "Fn::Sub": "brand-mcp-${ServiceId}-cache-subnet"
+        },
+        "SubnetIds": [
+          "subnet-073754de8deb7cf57",
+          "subnet-05719a618a3b04aa0",
+          "subnet-00b3be2fda8b55602"
+        ]
+      }
+    },
+    "CacheCluster": {
+      "Type": "AWS::ElastiCache::ReplicationGroup",
+      "Condition": "ShouldCreateElastiCache",
+      "DependsOn": "CacheSubnetGroup",
+      "Properties": {
+        "ReplicationGroupDescription": {
+          "Fn::Sub": "Valkey cluster for brand-mcp-${ServiceId}"
+        },
+        "ReplicationGroupId": {
+          "Fn::Sub": "brand-mcp-${ServiceId}-cache"
+        },
+        "Engine": "valkey",
+        "EngineVersion": "9.1",
+        "CacheNodeType": {
+          "Ref": "ElastiCacheNodeType"
+        },
+        "NumNodeGroups": 1,
+        "ReplicasPerNodeGroup": 0,
+        "ClusterMode": "enabled",
+        "AutomaticFailoverEnabled": false,
+        "MultiAZEnabled": false,
+        "TransitEncryptionEnabled": true,
+        "TransitEncryptionMode": "required",
+        "AtRestEncryptionEnabled": true,
+        "CacheSubnetGroupName": {
+          "Ref": "CacheSubnetGroup"
+        },
+        "SecurityGroupIds": [
+          {
+            "Ref": "ElastiCacheSecurityGroup"
+          }
+        ],
+        "UserGroupIds": [
+          "ecs-user-group"
+        ],
+        "AutoMinorVersionUpgrade": true,
+        "SnapshotRetentionLimit": 0
+      }
+    },
+    "Certificate": {
+      "Type": "AWS::CertificateManager::Certificate",
+      "Properties": {
+        "DomainName": {
+          "Fn::Sub": "${Subdomain}.mcp.payally.world"
+        },
+        "ValidationMethod": "DNS",
+        "DomainValidationOptions": [
+          {
+            "DomainName": {
+              "Fn::Sub": "${Subdomain}.mcp.payally.world"
+            },
+            "HostedZoneId": {
+              "Ref": "HostedZoneId"
+            }
+          }
+        ]
+      }
+    },
+    "TaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "ECS-role-brand-mcp-${ServiceId}"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": "398092290536"
+                },
+                "ArnLike": {
+                  "aws:SourceArn": "arn:aws:ecs:eu-west-1:398092290536:*"
+                }
+              }
+            }
+          ]
+        },
+        "MaxSessionDuration": 3600,
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonElastiCacheFullAccess"
+        ],
+        "Policies": [
+          {
+            "PolicyName": {
+              "Fn::Sub": "ECS-role-brand-mcp-${ServiceId}-Policy"
+            },
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "elasticache:*"
+                  ],
+                  "Resource": {
+                    "Fn::If": [
+                      "ShouldCreateElastiCache",
+                      {
+                        "Fn::Sub": "arn:aws:elasticache:eu-west-1:398092290536:replicationgroup:brand-mcp-${ServiceId}-cache"
+                      },
+                      "arn:aws:elasticache:eu-west-1:398092290536:replicationgroup:payally-cachedb"
+                    ]
+                  }
+                },
+                {
+                  "Sid": "ElastiCacheIamConnect",
+                  "Effect": "Allow",
+                  "Action": [
+                    "elasticache:Connect"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::If": [
+                        "ShouldCreateElastiCache",
+                        {
+                          "Fn::Sub": "arn:aws:elasticache:eu-west-1:398092290536:replicationgroup:brand-mcp-${ServiceId}-cache"
+                        },
+                        "arn:aws:elasticache:eu-west-1:398092290536:replicationgroup:payally-cachedb"
+                      ]
+                    },
+                    "arn:aws:elasticache:eu-west-1:398092290536:user:ecs-cache-user"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/ecs/default/brand-mcp-${ServiceId}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+    "TaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "DependsOn": [
+        "TaskRole",
+        "LogGroup"
+      ],
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "default-brand-mcp-${ServiceId}"
+        },
+        "Cpu": {
+          "Ref": "TaskCpu"
+        },
+        "Memory": {
+          "Ref": "TaskMemory"
+        },
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "TaskRole",
+            "Arn"
+          ]
+        },
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "TaskRole",
+            "Arn"
+          ]
+        },
+        "RuntimePlatform": {
+          "CpuArchitecture": "X86_64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "Main",
+            "Image": {
+              "Ref": "ImageUri"
+            },
+            "Cpu": {
+              "Fn::Select": [
+                0,
+                [
+                  {
+                    "Ref": "TaskCpu"
+                  }
+                ]
+              ]
+            },
+            "Memory": {
+              "Fn::Select": [
+                0,
+                [
+                  {
+                    "Ref": "TaskMemory"
+                  }
+                ]
+              ]
+            },
+            "MemoryReservation": {
+              "Ref": "TaskMemory"
+            },
+            "Essential": true,
+            "PortMappings": [
+              {
+                "ContainerPort": {
+                  "Ref": "ContainerPort"
+                },
+                "HostPort": {
+                  "Ref": "ContainerPort"
+                },
+                "Protocol": "tcp",
+                "Name": {
+                  "Fn::Sub": "main-${ContainerPort}-tcp"
+                }
+              }
+            ],
+            "Environment": [
+              {
+                "Name": "PORT",
+                "Value": {
+                  "Fn::Sub": "${ContainerPort}"
+                }
+              },
+              {
+                "Name": "BRAND_NAME",
+                "Value": {
+                  "Ref": "BrandName"
+                }
+              },
+              {
+                "Name": "BRAND_STORE_NOUN",
+                "Value": {
+                  "Ref": "BrandStoreNoun"
+                }
+              },
+              {
+                "Name": "BRAND_VOICE",
+                "Value": {
+                  "Ref": "BrandVoice"
+                }
+              },
+              {
+                "Name": "BRAND_PRODUCT_NOUNS",
+                "Value": {
+                  "Ref": "BrandProductNouns"
+                }
+              },
+              {
+                "Name": "BRAND_CATEGORY_HINTS",
+                "Value": {
+                  "Ref": "BrandCategoryHints"
+                }
+              },
+              {
+                "Name": "AUTH0_DOMAIN",
+                "Value": "accounts.payally.world"
+              },
+              {
+                "Name": "AUTH0_AUDIENCE",
+                "Value": {
+                  "Fn::Sub": "https://${Subdomain}.mcp.payally.world/"
+                }
+              },
+              {
+                "Name": "AUTH0_MGMT_AUDIENCE",
+                "Value": "https://dev-rve1br3wqis2kod3.us.auth0.com/api/v2/"
+              },
+              {
+                "Name": "AUTH0_MGMT_CLIENT_ID",
+                "Value": {
+                  "Ref": "Auth0ClientId"
+                }
+              },
+              {
+                "Name": "AUTH0_MGMT_CLIENT_SECRET",
+                "Value": {
+                  "Ref": "Auth0ClientSecret"
+                }
+              },
+              {
+                "Name": "MCP_SERVER_URL",
+                "Value": {
+                  "Fn::Sub": "https://${Subdomain}.mcp.payally.world"
+                }
+              },
+              {
+                "Name": "PAYPAL_MERCHANT_ID",
+                "Value": {
+                  "Ref": "PaypalMerchantId"
+                }
+              },
+              {
+                "Name": "ELASTIC_URL",
+                "Value": {
+                  "Fn::If": [
+                    "ShouldCreateElastiCache",
+                    {
+                      "Fn::GetAtt": [
+                        "CacheCluster",
+                        "ConfigurationEndPoint.Address"
+                      ]
+                    },
+                    {
+                      "Ref": "ExistingElastiCacheEndpoint"
+                    }
+                  ]
+                }
+              },
+              {
+                "Name": "ELASTIC_CACHE_CLUSTER_NAME",
+                "Value": {
+                  "Fn::Sub": "brand-mcp-${ServiceId}-cache"
+                }
+              },
+              {
+                "Name": "PAYALLY-X-APIKEY",
+                "Value": {
+                  "Ref": "PayallyApiKey"
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Fn::Sub": "/aws/ecs/default/brand-mcp-${ServiceId}"
+                },
+                "awslogs-region": "eu-west-1",
+                "awslogs-stream-prefix": "ecs"
+              }
+            },
+            "HealthCheck": {
+              "Command": [
+                "CMD-SHELL",
+                {
+                  "Fn::Sub": "node -e \"require('node:http').get({host:'127.0.0.1',port:${ContainerPort},path:'/health',timeout:2000},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""
+                }
+              ],
+              "Interval": 30,
+              "Timeout": 5,
+              "Retries": 3,
+              "StartPeriod": 15
+            }
+          }
+        ]
+      }
+    },
+    "TargetGroupBlue": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "ecs-tg-blue-${ServiceId}"
+        },
+        "VpcId": "vpc-089c56c8fd1aaa8d1",
+        "Protocol": "HTTP",
+        "Port": {
+          "Ref": "ContainerPort"
+        },
+        "TargetType": "ip",
+        "ProtocolVersion": "HTTP1",
+        "IpAddressType": "ipv4",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckPort": {
+          "Fn::Sub": "${ContainerPort}"
+        },
+        "HealthCheckPath": "/health",
+        "HealthCheckIntervalSeconds": 30,
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 5,
+        "UnhealthyThresholdCount": 2,
+        "Matcher": {
+          "HttpCode": "200"
+        }
+      }
+    },
+    "TargetGroupGreen": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "ecs-tg-green-${ServiceId}"
+        },
+        "VpcId": "vpc-089c56c8fd1aaa8d1",
+        "Protocol": "HTTP",
+        "Port": {
+          "Ref": "ContainerPort"
+        },
+        "TargetType": "ip",
+        "ProtocolVersion": "HTTP1",
+        "IpAddressType": "ipv4",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckPort": {
+          "Fn::Sub": "${ContainerPort}"
+        },
+        "HealthCheckPath": "/health",
+        "HealthCheckIntervalSeconds": 30,
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 5,
+        "UnhealthyThresholdCount": 2,
+        "Matcher": {
+          "HttpCode": "200"
+        }
+      }
+    },
+    "ListenerCertificate": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerCertificate",
+      "DependsOn": "Certificate",
+      "Properties": {
+        "ListenerArn": "arn:aws:elasticloadbalancing:eu-west-1:398092290536:listener/app/ecs-express-gateway-alb/dcbe75959aa61756/aa7c9ac747b9f109",
+        "Certificates": [
+          {
+            "CertificateArn": {
+              "Ref": "Certificate"
+            }
+          }
+        ]
+      }
+    },
+    "ListenerRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "DependsOn": [
+        "TargetGroupGreen",
+        "ListenerCertificate"
+      ],
+      "Properties": {
+        "ListenerArn": "arn:aws:elasticloadbalancing:eu-west-1:398092290536:listener/app/ecs-express-gateway-alb/dcbe75959aa61756/aa7c9ac747b9f109",
+        "Priority": {
+          "Ref": "ListenerRulePriority"
+        },
+        "Conditions": [
+          {
+            "Field": "host-header",
+            "HostHeaderConfig": {
+              "Values": [
+                {
+                  "Fn::Sub": "${Subdomain}.mcp.payally.world"
+                }
+              ]
+            }
+          }
+        ],
+        "Actions": [
+          {
+            "Type": "forward",
+            "Order": 1,
+            "ForwardConfig": {
+              "TargetGroups": [
+                {
+                  "TargetGroupArn": {
+                    "Ref": "TargetGroupGreen"
+                  },
+                  "Weight": 100
+                },
+                {
+                  "TargetGroupArn": {
+                    "Ref": "TargetGroupBlue"
+                  },
+                  "Weight": 0
+                }
+              ],
+              "TargetGroupStickinessConfig": {
+                "Enabled": false,
+                "DurationSeconds": 3600
+              }
+            }
+          }
+        ]
+      }
+    },
+    "EcsService": {
+      "Type": "AWS::ECS::Service",
+      "DependsOn": [
+        "TaskDefinition",
+        "ListenerRule",
+        "TargetGroupGreen"
+      ],
+      "Properties": {
+        "ServiceName": {
+          "Fn::Sub": "brand-mcp-${ServiceId}"
+        },
+        "Cluster": "arn:aws:ecs:eu-west-1:398092290536:cluster/default",
+        "TaskDefinition": {
+          "Ref": "TaskDefinition"
+        },
+        "DesiredCount": {
+          "Ref": "DesiredCount"
+        },
+        "LaunchType": "FARGATE",
+        "PlatformVersion": "1.4.0",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "Subnets": [
+              "subnet-073754de8deb7cf57",
+              "subnet-05719a618a3b04aa0",
+              "subnet-00b3be2fda8b55602"
+            ],
+            "SecurityGroups": [
+              {
+                "Ref": "EcsTaskSecurityGroup"
+              }
+            ]
+          }
+        },
+        "LoadBalancers": [
+          {
+            "ContainerName": "Main",
+            "ContainerPort": {
+              "Ref": "ContainerPort"
+            },
+            "TargetGroupArn": {
+              "Ref": "TargetGroupGreen"
+            }
+          }
+        ],
+        "DeploymentConfiguration": {
+          "DeploymentCircuitBreaker": {
+            "Enable": true,
+            "Rollback": true
+          },
+          "MaximumPercent": 200,
+          "MinimumHealthyPercent": 100
+        },
+        "DeploymentController": {
+          "Type": "ECS"
+        },
+        "EnableExecuteCommand": false
+      }
+    },
+    "DnsRecord": {
+      "Type": "AWS::Route53::RecordSet",
+      "Properties": {
+        "HostedZoneId": {
+          "Ref": "HostedZoneId"
+        },
+        "Name": {
+          "Fn::Sub": "${Subdomain}.mcp.payally.world"
+        },
+        "Type": "A",
+        "AliasTarget": {
+          "DNSName": "ecs-express-gateway-alb-574625163.eu-west-1.elb.amazonaws.com",
+          "EvaluateTargetHealth": false,
+          "HostedZoneId": "Z32O12XQLNTSW2"
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "ServiceUrl": {
+      "Description": "Public HTTPS URL for this brand",
+      "Value": {
+        "Fn::Sub": "https://${Subdomain}.mcp.payally.world"
+      }
+    },
+    "ServiceName": {
+      "Description": "ECS service name",
+      "Value": {
+        "Fn::Sub": "brand-mcp-${ServiceId}"
+      }
+    },
+    "TaskRoleArn": {
+      "Description": "IAM task role ARN",
+      "Value": {
+        "Fn::GetAtt": [
+          "TaskRole",
+          "Arn"
+        ]
+      }
+    },
+    "CertificateArn": {
+      "Description": "ACM certificate ARN",
+      "Value": {
+        "Ref": "Certificate"
+      }
+    },
+
+    "ElasticacheEndpoint": {
+      "Description": "ElastiCache configuration endpoint",
+      "Value": {
+        "Fn::If": [
+          "ShouldCreateElastiCache",
+          {
+            "Fn::GetAtt": [
+              "CacheCluster",
+              "ConfigurationEndPoint.Address"
+            ]
+          },
+          {
+            "Ref": "ExistingElastiCacheEndpoint"
+          }
+        ]
+      }
+    }
+  }
+}
